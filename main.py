@@ -166,17 +166,12 @@ while True:
     # 修改: 更新 line_y
     counter.set_line_y(LINE_Y)
 
-    # 每5帧检测一次
-    if frame_id % 5 == 0:
-        persons = yolo_v5_person_infer(frame, net)
-        tracks = tracker.update(persons)
-    else:
-        # 其余帧使用 tracker 预测
-        tracks = tracker.predict()
-
+    persons = yolo_v5_person_infer(frame, net)
+    tracks = tracker.update(persons)
     counter.update(tracks)
 
     in_count, out_count = counter.get_counts()
+    total_count = counter.total_count  # 获取总人数
 
     # 可视化
     for x1, y1, x2, y2, score in persons:
@@ -194,10 +189,12 @@ while True:
     # 画统计线
     cv2.line(frame, (0, LINE_Y), (frame.shape[1], LINE_Y), (255, 0, 0), 2)
 
-    cv2.putText(frame, f"IN: {in_count}", (20, 40),
+    # 显示统计信息
+    cv2.putText(frame, f"Total count: {total_count}", (20, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+    cv2.putText(frame, f"IN: {in_count}", (20, 70),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
-
-    cv2.putText(frame, f"OUT: {out_count}", (20, 80),
+    cv2.putText(frame, f"OUT: {out_count}", (20, 110),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
     cv2.imshow("YOLOv5n Person", frame)
     if cv2.waitKey(1) & 0xFF == 27:

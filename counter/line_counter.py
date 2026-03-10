@@ -12,11 +12,15 @@ class LineCounter:
 
         self.in_count = 0
         self.out_count = 0
+        self.total_count = 0  # 新增: 总人数统计
 
     def update(self, tracks):
         """
         tracks: [[x1,y1,x2,y2,id], ...]
         """
+        # 更新 total_count
+        self.total_count = len(tracks)  # 当前帧中所有被跟踪的人数
+
         for x1, y1, x2, y2, tid in tracks:
             cy = (y1 + y2) // 2
 

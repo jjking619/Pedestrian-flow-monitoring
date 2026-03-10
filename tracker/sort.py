@@ -87,20 +87,4 @@ class Sort:
 
         return matched, unmatched_dets, unmatched_trks
     
-    # 新增 predict 方法
-    def predict(self):
-        """
-        Predict the next state of all active trackers.
-        Returns: List of predicted bounding boxes [x1, y1, x2, y2, id]
-        """
-        trks = []
-        for t in self.trackers:
-            trks.append(t.predict())
-        
-        results = []
-        for t, box in zip(self.trackers, trks):
-            if t.time_since_update < 1 and t.hits >= self.min_hits:
-                x1, y1, x2, y2 = map(int, box)
-                results.append([x1, y1, x2, y2, t.id])
-        
-        return results
+    
