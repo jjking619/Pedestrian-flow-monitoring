@@ -8,11 +8,12 @@ import cv2
 import numpy as np
 import os
 import sys
+import threading
+import queue
 from urllib.parse import urlparse
 from tracker.sort import Sort
 from counter.line_counter import LineCounter
 
-# Import ONVIF discovery functions from camera_discover
 from wsdiscovery import WSDiscovery
 from onvif import ONVIFCamera
 
@@ -23,11 +24,11 @@ FRAME_HEIGHT = 720
 ONVIF_USER = ""
 ONVIF_PASS = ""
 
-# Default detection parameters
-DEFAULT_FPS = 5
-
-tracker = Sort()
-counter = LineCounter(line_y=0)
+# Global variables for thread communication
+frame_queue = queue.Queue(maxsize=2)  # Limit queue size to prevent memory buildup
+result_queue = queue.Queue(maxsize=1)  # Store latest processing result
+stop_event = threading.Event()
+processing_lock = threading.Lock()
 
 def discover_onvif_devices(timeout=3):
     """WS-Discovery search for ONVIF devices in local network"""
@@ -238,25 +239,85 @@ def yolo_v5_person_infer(
 
 def setup_rtsp_stream(rtsp_url):
     """Setup RTSP stream with TCP transport for better reliability"""
-    # 修改：使用TCP传输以提高稳定性，避免UDP丢包导致解码错误
-    # os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|buffer_size;1024"
+    # 启用TCP传输以提高稳定性，避免UDP丢包导致解码错误和延迟
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|analyzeduration;1000000|probesize;32"
     
-    cap = cv2.VideoCapture(rtsp_url)
+    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
     
-    # 设置较大的缓冲区大小以应对网络波动
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 10)  # 增大缓冲区
+    # 减小缓冲区大小以降低延迟（从10改为1-2）
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     
-    # 设置合适的分辨率以平衡性能与画质
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 360)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+    # 设置低延迟模式
+    #cap.set(cv2.CAP_PROP_LATENCY, 0)
     
     return cap
+
+def ai_processing_worker(net):
+    """Worker thread for AI processing, tracking and counting"""
+    tracker = Sort()
+    counter = LineCounter(line_y=0)
+    
+    while not stop_event.is_set():
+        try:
+            # Get frame from queue with timeout
+            frame_data = frame_queue.get(timeout=1.0)
+            if frame_data is None:
+                break
+                
+            frame, frame_id = frame_data
+            
+            # Update counting line position (middle of frame)
+            LINE_Y = frame.shape[0] // 2
+            counter.set_line_y(LINE_Y)
+            
+            # Run person detection
+            persons = yolo_v5_person_infer(frame, net)
+            tracks = tracker.update(persons)
+            counter.update(tracks)
+            
+            in_count, out_count = counter.get_counts()
+            total_count = counter.total_count
+            
+            # Put results in result queue (overwrite old results if queue is full)
+            try:
+                result_queue.put_nowait({
+                    'frame': frame,
+                    'persons': persons,
+                    'tracks': tracks,
+                    'counts': (in_count, out_count, total_count),
+                    'line_y': LINE_Y,
+                    'frame_id': frame_id
+                })
+            except queue.Full:
+                # Remove old result and add new one
+                try:
+                    result_queue.get_nowait()
+                    result_queue.put_nowait({
+                        'frame': frame,
+                        'persons': persons,
+                        'tracks': tracks,
+                        'counts': (in_count, out_count, total_count),
+                        'line_y': LINE_Y,
+                        'frame_id': frame_id
+                    })
+                except queue.Empty:
+                    pass
+                    
+            frame_queue.task_done()
+            
+        except queue.Empty:
+            continue
+        except Exception as e:
+            print(f"AI processing error: {e}")
+            if not frame_queue.empty():
+                frame_queue.task_done()
 
 def main():
     print("=" * 60)
     print("📹 IP Camera Pedestrian Flow Monitoring System")
     print("   - ONVIF network camera auto-discovery")
     print("   - Real-time pedestrian counting and tracking")
+    print("   - Multi-threaded processing for better performance")
     print("=" * 60)
     
     # Step 1: Discover ONVIF devices
@@ -330,7 +391,13 @@ def main():
     print(f"  Frame dimensions: {actual_width}x{actual_height}")
     print(f"  Frame rate: {actual_fps:.2f} fps")
     
-    # Step 6: Start processing loop
+    # Step 6: Start AI processing worker thread
+    print("\n🧵 Starting AI processing worker thread...")
+    worker_thread = threading.Thread(target=ai_processing_worker, args=(net,))
+    worker_thread.daemon = True
+    worker_thread.start()
+    
+    # Step 7: Start main processing loop (frame capture)
     print("\n🚀 Starting pedestrian flow monitoring...")
     print("Press 'ESC' to exit")
     
@@ -339,57 +406,100 @@ def main():
     cv2.resizeWindow("IP Camera Pedestrian Flow", FRAME_WIDTH, FRAME_HEIGHT)
     
     frame_id = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("⚠️ Failed to read frame from RTSP stream")
-            break
-        
-        # Update counting line position (middle of frame)
-        LINE_Y = frame.shape[0] // 2
-        counter.set_line_y(LINE_Y)
-        
-        # Run person detection
-        persons = yolo_v5_person_infer(frame, net)
-        tracks = tracker.update(persons)
-        counter.update(tracks)
-        
-        in_count, out_count = counter.get_counts()
-        total_count = counter.total_count
-        
-        # Visualization
-        for x1, y1, x2, y2, score in persons:
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(
-                frame,
-                f"person {score:.2f}",
-                (x1, y1 - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,  # 减小字体大小
-                (0, 255, 0),
-                1  # 减小字体粗细
-            )
-        
-        # Draw counting line
-        cv2.line(frame, (0, LINE_Y), (frame.shape[1], LINE_Y), (255, 0, 0), 2)
-        
-        # Display statistics - 使用更小的字体
-        cv2.putText(frame, f"Total count: {total_count}", (20, 80),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        cv2.putText(frame, f"IN: {in_count}", (20, 120),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(frame, f"OUT: {out_count}", (20, 160),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        
-        cv2.imshow("IP Camera Pedestrian Flow", frame)
-        
-        key = cv2.waitKey(1) & 0xFF
-        if key == 27:  # ESC key
-            break
-        
-        frame_id += 1
+    last_processed_frame_id = -1
+    
+    try:
+        while not stop_event.is_set():
+            ret, frame = cap.read()
+            if not ret:
+                print("⚠️ Failed to read frame from RTSP stream")
+                break
+            
+            # Put frame in processing queue (skip if queue is full to maintain real-time)
+            try:
+                frame_queue.put_nowait((frame.copy(), frame_id))
+            except queue.Full:
+                # Skip this frame to maintain real-time performance
+                pass
+            
+            # Display results if available
+            try:
+                result = result_queue.get_nowait()
+                if result['frame_id'] > last_processed_frame_id:
+                    display_frame = result['frame'].copy()
+                    persons = result['persons']
+                    tracks = result['tracks']
+                    in_count, out_count, total_count = result['counts']
+                    LINE_Y = result['line_y']
+                    last_processed_frame_id = result['frame_id']
+                    
+                    # Visualization
+                    for x1, y1, x2, y2, score in persons:
+                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.putText(
+                            display_frame,
+                            f"person {score:.2f}",
+                            (x1, y1 - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,  # 减小字体大小
+                            (0, 255, 0),
+                            1  # 减小字体粗细
+                        )
+                    
+                    # Draw counting line
+                    cv2.line(display_frame, (0, LINE_Y), (display_frame.shape[1], LINE_Y), (255, 0, 0), 2)
+                    
+                    # Display statistics - 使用更小的字体
+                    cv2.putText(display_frame, f"Total count: {total_count}", (20, 80),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                    cv2.putText(display_frame, f"IN: {in_count}", (20, 120),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    cv2.putText(display_frame, f"OUT: {out_count}", (20, 160),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    
+                    cv2.imshow("IP Camera Pedestrian Flow", display_frame)
+                
+                result_queue.task_done()
+                
+            except queue.Empty:
+                # No processed results yet, show raw frame
+                cv2.imshow("IP Camera Pedestrian Flow", frame)
+            
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27:  # ESC key
+                print("🛑 Exit requested by user")
+                stop_event.set()
+                break
+            
+            frame_id += 1
+            
+    except KeyboardInterrupt:
+        print("\n🛑 Interrupted by user")
+        stop_event.set()
     
     # Cleanup
+    print("\n🧹 Cleaning up resources...")
+    stop_event.set()
+    
+    # Wait for worker thread to finish
+    if worker_thread.is_alive():
+        worker_thread.join(timeout=2.0)
+    
+    # Clear queues
+    while not frame_queue.empty():
+        try:
+            frame_queue.get_nowait()
+            frame_queue.task_done()
+        except queue.Empty:
+            break
+    
+    while not result_queue.empty():
+        try:
+            result_queue.get_nowait()
+            result_queue.task_done()
+        except queue.Empty:
+            break
+    
     cap.release()
     cv2.destroyAllWindows()
     print("\n👋 Pedestrian flow monitoring stopped.")
