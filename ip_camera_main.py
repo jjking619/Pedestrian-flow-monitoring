@@ -3,7 +3,6 @@
 IP Camera Pedestrian Flow Monitoring System
 Integrates ONVIF device discovery with RTSP stream processing for real-time pedestrian counting
 """
-
 import cv2
 import numpy as np
 import os
@@ -165,7 +164,7 @@ def yolo_v5_person_infer(
     net,
     conf_thresh=0.4,
     iou_thresh=0.45,
-    input_size=640
+    input_size=320
 ):
     """
     OpenCV DNN + YOLOv5n ONNX
@@ -368,7 +367,7 @@ def main():
     
     # Step 4: Load YOLOv5 model
     try:
-        net = cv2.dnn.readNetFromONNX("models/yolov5n_person.onnx")
+        net = cv2.dnn.readNetFromONNX("models/yolov5n_320.onnx")
         print("✅ YOLOv5 model loaded successfully")
     except Exception as e:
         print(f"❌ Failed to load YOLOv5 model: {e}")
