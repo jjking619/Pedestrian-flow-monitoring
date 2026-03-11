@@ -12,34 +12,33 @@ tracker = Sort()
 counter = LineCounter(line_y=0)  # 初始化时设置 line_y，后续会动态更新
 
 def find_available_camera():
-    """Automatically detect available camera devices"""
-    print("[INFO] Searching for available cameras...")
-
-    # Try camera indices 0-9
-    for i in range(10):
-        device_path = f"/dev/video{i}"
-        if os.path.exists(device_path):
-            print(f"[INFO] Device path exists: {device_path}")
-            temp_cap = cv2.VideoCapture(i)
-            if temp_cap.isOpened():
-                ret, frame = temp_cap.read()
-                if ret:
-                    print(f"[INFO] Found available camera at index: {i}")
-                    temp_cap.release()
-                    return i
-                else:
-                    print(f"[WARNING] Camera {i} opened but failed to read frame")
-                    temp_cap.release()
-            else:
-                print(f"[WARNING] Failed to open camera at index: {i}")
-        else:
-            print(f"[INFO] Device path does not exist: {device_path}")
-    
-    raise RuntimeError("No camera found")
+        """Automatically detect available camera"""
+        #debug("Searching for available camera devices...")
+        # First try the default cameras (0-9)
+        for i in range(10):
+            temp_cap = None
+            try:
+                temp_cap = cv2.VideoCapture(i)
+                if temp_cap.isOpened():
+                    ret, frame = temp_cap.read()
+                    if ret:
+                        temp_cap.release()
+                        #debug(f"Found available camera at device ID: {i}")
+                        return i
+            except Exception as e:
+                error(f"Error checking camera {i}: {e}")
+            finally:
+                if temp_cap is not None:
+                    try:
+                        temp_cap.release()
+                    except:
+                        error(f"Error temp_cap.release(): {e}")
+        error("No available camera device found")
+        return None
 
 def letterbox(
     img,
-    new_shape=(640, 640),
+    new_shape=(360, 240),
     color=(114, 114, 114),
 ):
     h, w = img.shape[:2]
@@ -147,8 +146,8 @@ CAMERA_INDEX = find_available_camera()
 cap = cv2.VideoCapture(CAMERA_INDEX)
 
 #降低分辨率减少算力压力
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 360)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
 
 # 设置窗口大小

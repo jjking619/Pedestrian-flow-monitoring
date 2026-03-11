@@ -52,3 +52,7 @@ urllib3>=2.6.0 ; python_version > "3.8" # not directly required, pinned by Snyk 
 
 # Additional Dependencies -----------------------------------------------------
 filterpy>=1.4.5  # Kalman filter implementation for object tracking
+
+# ONVIF and network discovery dependencies
+onvif-zeep>=4.3.0  # ONVIF protocol implementation
+wsdiscovery>=2.0.0  # WS-Discovery for ONVIF device discovery
