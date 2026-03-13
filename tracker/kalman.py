@@ -1,7 +1,3 @@
-import numpy as np
-from filterpy.kalman import KalmanFilter
-
-
 class KalmanBoxTracker:
     count = 0
 
@@ -34,7 +30,11 @@ class KalmanBoxTracker:
         self.kf.Q[-1,-1] *= 0.01
         self.kf.Q[4:,4:] *= 0.01
 
-        self.kf.x[:4] = np.array(bbox).reshape((4,1))
+        # 手动设置初始状态
+        
+        # 修改为确保正确形状
+        self.kf.x[:4] = np.array(bbox).reshape(4, 1)
+        self.kf.x[4:] = np.zeros((3, 1))  # velocity
 
         self.time_since_update = 0
         self.id = KalmanBoxTracker.count
@@ -44,9 +44,6 @@ class KalmanBoxTracker:
     def update(self, bbox):
         self.time_since_update = 0
         self.hits += 1
-        self.kf.update(np.array(bbox).reshape((4,1)))
-
-    def predict(self):
-        self.kf.predict()
-        self.time_since_update += 1
-        return self.kf.x[:4].reshape(-1)
+        
+        # 修改为确保正确形状
+        self.kf.update(np.array(bbox).reshape(4, 1))

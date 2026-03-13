@@ -10,7 +10,7 @@ import sys
 import threading
 import queue
 from urllib.parse import urlparse
-from tracker.sort import Sort
+from tracker.bytetrack import BYTETracker  # 导入新的ByteTrack
 from counter.line_counter import LineCounter
 
 from wsdiscovery import WSDiscovery
@@ -24,7 +24,7 @@ ONVIF_USER = ""
 ONVIF_PASS = ""
 
 # Global variables for thread communication
-frame_queue = queue.Queue(maxsize=2)  # Limit queue size to prevent memory buildup
+frame_queue = queue.Queue(maxsize=1)  # 只保存最新一帧，自动丢弃旧帧
 result_queue = queue.Queue(maxsize=1)  # Store latest processing result
 stop_event = threading.Event()
 processing_lock = threading.Lock()
@@ -238,22 +238,23 @@ def yolo_v5_person_infer(
 
 def setup_rtsp_stream(rtsp_url):
     """Setup RTSP stream with TCP transport for better reliability"""
-    # 启用TCP传输以提高稳定性，避免UDP丢包导致解码错误和延迟
     os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|analyzeduration;1000000|probesize;32"
-    
     cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-    
-    # 减小缓冲区大小以降低延迟（从10改为1-2）
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    
-    # 设置低延迟模式
-    #cap.set(cv2.CAP_PROP_LATENCY, 0)
-    
     return cap
 
 def ai_processing_worker(net):
     """Worker thread for AI processing, tracking and counting"""
-    tracker = Sort()
+    # tracker = Sort()  # 注释掉原来的SORT
+    # 使用ByteTrack，配置参数以优化多人检测效果
+    tracker = BYTETracker(
+        track_thresh=0.5,      # 跟踪阈值
+        high_thresh=0.5,       # 高置信度阈值
+        low_thresh=0.1,        # 低置信度阈值（ByteTrack的关键：利用低分检测框）
+        match_thresh=0.8,      # 匹配阈值
+        track_buffer=30,       # 跟踪缓冲区大小
+        frame_rate=5         # 帧率
+    )
     counter = LineCounter(line_y=0)
     
     while not stop_event.is_set():
@@ -269,8 +270,8 @@ def ai_processing_worker(net):
             LINE_Y = frame.shape[0] // 2
             counter.set_line_y(LINE_Y)
             
-            # Run person detection
-            persons = yolo_v5_person_infer(frame, net)
+            # Run person detection - 提高置信度阈值以减少误检
+            persons = yolo_v5_person_infer(frame, net, conf_thresh=0.5, iou_thresh=0.5)
             tracks = tracker.update(persons)
             counter.update(tracks)
             
@@ -312,13 +313,7 @@ def ai_processing_worker(net):
                 frame_queue.task_done()
 
 def main():
-    print("=" * 60)
-    print("📹 IP Camera Pedestrian Flow Monitoring System")
-    print("   - ONVIF network camera auto-discovery")
-    print("   - Real-time pedestrian counting and tracking")
-    print("   - Multi-threaded processing for better performance")
-    print("=" * 60)
-    
+
     # Step 1: Discover ONVIF devices
     print("\n🔍 Searching for ONVIF devices...")
     devices = discover_onvif_devices(timeout=5)
@@ -357,7 +352,7 @@ def main():
     print(f"  ✅ Main stream: {main['name']} ({main['width']}x{main['height']})")
     if sub:
         print(f"  ✅ Sub-stream: {sub['name']} ({sub['width']}x{sub['height']})")
-        selected_stream = sub  # 优先使用主码流
+        selected_stream = sub  
     else:
         print("  ⚠️ Only one stream available, using main stream")
         selected_stream = main
@@ -414,12 +409,24 @@ def main():
                 print("⚠️ Failed to read frame from RTSP stream")
                 break
             
-            # Put frame in processing queue (skip if queue is full to maintain real-time)
+            # 确保队列中始终只有最新一帧
+            if not frame_queue.empty():
+                try:
+                    frame_queue.get_nowait()  # 删除旧帧
+                    frame_queue.task_done()
+                except queue.Empty:
+                    pass
+            
+            # 添加新帧到队列
             try:
                 frame_queue.put_nowait((frame.copy(), frame_id))
             except queue.Full:
-                # Skip this frame to maintain real-time performance
-                pass
+                # 如果还是满的（理论上不应该发生），强制覆盖
+                try:
+                    frame_queue.get_nowait()
+                    frame_queue.put_nowait((frame.copy(), frame_id))
+                except queue.Empty:
+                    pass
             
             # Display results if available
             try:
