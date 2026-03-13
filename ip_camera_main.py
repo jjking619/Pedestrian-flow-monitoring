@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-IP Camera Pedestrian Flow Monitoring System
-Integrates ONVIF device discovery with RTSP stream processing for real-time pedestrian counting
-"""
+
 import cv2
 import numpy as np
 import os
@@ -10,7 +7,7 @@ import sys
 import threading
 import queue
 from urllib.parse import urlparse
-from tracker.bytetrack import BYTETracker  # 导入新的ByteTrack
+from tracker.bytetrack import BYTETracker  
 from counter.line_counter import LineCounter
 
 from wsdiscovery import WSDiscovery
@@ -245,7 +242,7 @@ def setup_rtsp_stream(rtsp_url):
 
 def ai_processing_worker(net):
     """Worker thread for AI processing, tracking and counting"""
-    # tracker = Sort()  # 注释掉原来的SORT
+    # tracker = Sort()  #
     # 使用ByteTrack，配置参数以优化多人检测效果
     tracker = BYTETracker(
         track_thresh=0.5,      # 跟踪阈值
@@ -401,45 +398,43 @@ def main():
     
     frame_id = 0
     last_processed_frame_id = -1
-    
+    last_display_frame = None  # 新增：缓存上一次显示的带标注帧
+
     try:
         while not stop_event.is_set():
             ret, frame = cap.read()
             if not ret:
                 print("⚠️ Failed to read frame from RTSP stream")
                 break
-            
-            # 确保队列中始终只有最新一帧
-            if not frame_queue.empty():
+
+            # 将新帧放入处理队列（保持原有逻辑，确保队列中始终最新）
+            try:
+                frame_queue.put((frame.copy(), frame_id), block=False)
+            except queue.Full:
                 try:
-                    frame_queue.get_nowait()  # 删除旧帧
+                    frame_queue.get(block=False)
                     frame_queue.task_done()
                 except queue.Empty:
                     pass
-            
-            # 添加新帧到队列
-            try:
-                frame_queue.put_nowait((frame.copy(), frame_id))
-            except queue.Full:
-                # 如果还是满的（理论上不应该发生），强制覆盖
                 try:
-                    frame_queue.get_nowait()
-                    frame_queue.put_nowait((frame.copy(), frame_id))
-                except queue.Empty:
+                    frame_queue.put((frame.copy(), frame_id), block=False)
+                except queue.Full:
                     pass
-            
-            # Display results if available
+
+            # 尝试获取最新处理结果
             try:
                 result = result_queue.get_nowait()
+                # 只处理比上次更新的帧
                 if result['frame_id'] > last_processed_frame_id:
+                    # 构建带标注的显示帧
                     display_frame = result['frame'].copy()
                     persons = result['persons']
                     tracks = result['tracks']
                     in_count, out_count, total_count = result['counts']
                     LINE_Y = result['line_y']
                     last_processed_frame_id = result['frame_id']
-                    
-                    # Visualization
+
+                    # 绘制检测框
                     for x1, y1, x2, y2, score in persons:
                         cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                         cv2.putText(
@@ -447,38 +442,42 @@ def main():
                             f"person {score:.2f}",
                             (x1, y1 - 5),
                             cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5,  # 减小字体大小
+                            0.5,
                             (0, 255, 0),
-                            1  # 减小字体粗细
+                            1
                         )
-                    
-                    # Draw counting line
+
+                    # 绘制计数线和统计信息
                     cv2.line(display_frame, (0, LINE_Y), (display_frame.shape[1], LINE_Y), (255, 0, 0), 2)
-                    
-                    # Display statistics - 使用更小的字体
                     cv2.putText(display_frame, f"Total count: {total_count}", (20, 80),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                     cv2.putText(display_frame, f"IN: {in_count}", (20, 120),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                     cv2.putText(display_frame, f"OUT: {out_count}", (20, 160),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                    
+
+                    # 更新缓存并显示
+                    last_display_frame = display_frame.copy()
                     cv2.imshow("IP Camera Pedestrian Flow", display_frame)
-                
+
                 result_queue.task_done()
-                
+
             except queue.Empty:
-                # No processed results yet, show raw frame
-                cv2.imshow("IP Camera Pedestrian Flow", frame)
-            
+                # 无新结果时，显示缓存的上一帧（如果存在），否则显示原始帧
+                if last_display_frame is not None:
+                    cv2.imshow("IP Camera Pedestrian Flow", last_display_frame)
+                else:
+                    # 刚开始处理时可能还没有缓存，显示原始帧
+                    cv2.imshow("IP Camera Pedestrian Flow", frame)
+
             key = cv2.waitKey(1) & 0xFF
-            if key == 27:  # ESC key
+            if key == 27:  # ESC
                 print("🛑 Exit requested by user")
                 stop_event.set()
                 break
-            
+
             frame_id += 1
-            
+
     except KeyboardInterrupt:
         print("\n🛑 Interrupted by user")
         stop_event.set()
