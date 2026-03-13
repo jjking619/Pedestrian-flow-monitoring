@@ -56,3 +56,5 @@ filterpy>=1.4.5  # Kalman filter implementation for object tracking
 # ONVIF and network discovery dependencies
 onvif-zeep>=4.3.0  # ONVIF protocol implementation
 wsdiscovery>=2.0.0  # WS-Discovery for ONVIF device discovery
+
+numba >=0.64.0  # Numba for GPU acceleration

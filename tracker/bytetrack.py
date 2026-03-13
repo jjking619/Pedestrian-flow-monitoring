@@ -1,33 +1,8 @@
-# bytetrack.py
-# 简化版 ByteTrack 实现，用于多目标跟踪
-# 修复了 KalmanFilter.update 形状错误，并增强索引安全性
 
 import numpy as np
-
-# 尝试导入 scipy 的匈牙利算法，若不可用则使用简易贪心匹配
-try:
-    from scipy.optimize import linear_sum_assignment
-    _scipy_available = True
-except ImportError:
-    _scipy_available = False
-    def linear_sum_assignment(cost_matrix):
-        """简易贪心匹配（备选方案，效果较差）"""
-        cost_matrix = np.asarray(cost_matrix)
-        row_ind, col_ind = [], []
-        rows, cols = cost_matrix.shape
-        used_cols = set()
-        for i in range(rows):
-            min_cost = np.inf
-            best_j = -1
-            for j in range(cols):
-                if j not in used_cols and cost_matrix[i, j] < min_cost:
-                    min_cost = cost_matrix[i, j]
-                    best_j = j
-            if best_j != -1:
-                row_ind.append(i)
-                col_ind.append(best_j)
-                used_cols.add(best_j)
-        return row_ind, col_ind
+import numba
+from numba import njit, prange
+from scipy.optimize import linear_sum_assignment
 
 class TrackState(object):
     New = 0
@@ -319,7 +294,48 @@ def ious(atlbrs, btlbrs):
     iou = inter_area / np.maximum(union_area, 1e-6)
     return iou
 
+@njit(parallel=True, fastmath=True)
+def compute_iou_matrix(atlbrs, btlbrs):
+    """
+    计算两组边界框（tlbr格式）的 IOU 矩阵。
+    输入 atlbrs: (M, 4) 数组
+    输入 btlbrs: (N, 4) 数组
+    返回 IOU 距离矩阵 (1 - IOU)，形状 (M, N)
+    """
+    m = atlbrs.shape[0]
+    n = btlbrs.shape[0]
+    iou_matrix = np.empty((m, n), dtype=np.float32)
+
+    for i in prange(m):  # 并行外层循环
+        a_x1, a_y1, a_x2, a_y2 = atlbrs[i]
+        a_area = (a_x2 - a_x1) * (a_y2 - a_y1)
+        if a_area <= 0:
+            a_area = 1e-6
+
+        for j in range(n):
+            b_x1, b_y1, b_x2, b_y2 = btlbrs[j]
+            b_area = (b_x2 - b_x1) * (b_y2 - b_y1)
+            if b_area <= 0:
+                b_area = 1e-6
+
+            # 交集
+            inter_x1 = max(a_x1, b_x1)
+            inter_y1 = max(a_y1, b_y1)
+            inter_x2 = min(a_x2, b_x2)
+            inter_y2 = min(a_y2, b_y2)
+            inter_w = max(0.0, inter_x2 - inter_x1)
+            inter_h = max(0.0, inter_y2 - inter_y1)
+            inter_area = inter_w * inter_h
+
+            # IOU
+            union_area = a_area + b_area - inter_area
+            iou = inter_area / union_area if union_area > 0 else 0.0
+            iou_matrix[i, j] = 1.0 - iou  # 距离
+
+    return iou_matrix
+
 def iou_distance(atracks, btracks):
+    # 原有代码：将输入统一为二维数组 atlbrs, btlbrs
     if (len(atracks) > 0 and isinstance(atracks[0], np.ndarray)) or \
        (len(btracks) > 0 and isinstance(btracks[0], np.ndarray)):
         atlbrs = atracks
@@ -327,43 +343,44 @@ def iou_distance(atracks, btracks):
     else:
         atlbrs = np.array([track.tlbr for track in atracks])
         btlbrs = np.array([track.tlbr for track in btracks])
-    
+
     if len(atlbrs) == 0 or len(btlbrs) == 0:
         return np.zeros((len(atlbrs), len(btlbrs)))
-    
+
+    # 确保形状为 (n,4)
     if atlbrs.shape[1] < 4 or btlbrs.shape[1] < 4:
         atlbrs = atlbrs[:, :4]
         btlbrs = btlbrs[:, :4]
-    
+
     if atlbrs.ndim != 2 or btlbrs.ndim != 2:
         atlbrs = atlbrs.reshape(-1, 4)
         btlbrs = btlbrs.reshape(-1, 4)
-    
-    inter_x1 = np.maximum(atlbrs[:, None, 0], btlbrs[:, 0])
-    inter_y1 = np.maximum(atlbrs[:, None, 1], btlbrs[:, 1])
-    inter_x2 = np.minimum(atlbrs[:, None, 2], btlbrs[:, 2])
-    inter_y2 = np.minimum(atlbrs[:, None, 3], btlbrs[:, 3])
-    
-    inter_w = np.maximum(0, inter_x2 - inter_x1)
-    inter_h = np.maximum(0, inter_y2 - inter_y1)
-    inter_area = inter_w * inter_h
-    
-    area_a = (atlbrs[:, 2] - atlbrs[:, 0]) * (atlbrs[:, 3] - atlbrs[:, 1])
-    area_b = (btlbrs[:, 2] - btlbrs[:, 0]) * (btlbrs[:, 3] - btlbrs[:, 1])
-    union_area = area_a[:, None] + area_b - inter_area
-    
-    iou = inter_area / np.maximum(union_area, 1e-6)
-    return 1 - iou
+
+    # 调用 Numba 加速函数
+    return compute_iou_matrix(atlbrs.astype(np.float32), btlbrs.astype(np.float32))
+
+@njit(parallel=True, fastmath=True)
+def fuse_score_matrix(cost_matrix, scores):
+    """
+    cost_matrix: (M, N) IOU 距离矩阵
+    scores: (N,) 检测得分数组
+    返回融合后的代价矩阵
+    """
+    m, n = cost_matrix.shape
+    fuse_cost = np.empty((m, n), dtype=cost_matrix.dtype)
+
+    for i in prange(m):
+        for j in range(n):
+            iou_sim = 1.0 - cost_matrix[i, j]
+            fuse_sim = iou_sim * scores[j]
+            fuse_cost[i, j] = 1.0 - fuse_sim
+    return fuse_cost
 
 def fuse_score(cost_matrix, detections):
     if cost_matrix.size == 0:
         return cost_matrix
-    iou_sim = 1 - cost_matrix
-    det_scores = np.array([det.score for det in detections])
-    det_scores = np.expand_dims(det_scores, axis=0).repeat(cost_matrix.shape[0], axis=0)
-    fuse_sim = iou_sim * det_scores
-    fuse_cost = 1 - fuse_sim
-    return fuse_cost
+    scores = np.array([det.score for det in detections], dtype=np.float32)
+    return fuse_score_matrix(cost_matrix, scores)
 
 def linear_assignment(cost_matrix, thresh):
     if cost_matrix.size == 0:
