@@ -144,13 +144,19 @@ class KalmanFilter(object):
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
 
-    def __init__(self, tlwh, score):
+    def __init__(self, tlwh, score, feature=None):
         self._tlwh = np.asarray(tlwh, dtype=np.float64)
         self.kalman_filter = None
         self.mean, self.covariance = None, None
         self.is_activated = False
         self.score = score
         self.tracklet_len = 0
+        # 新增特征相关
+        self.features = []          # 保存历史特征（可限制长度）
+        self.curr_feature = None    # 当前帧的特征
+        if feature is not None:
+            self.curr_feature = feature
+            self.features.append(feature)
 
     def predict(self):
         mean_state = self.mean.copy()
@@ -182,7 +188,7 @@ class STrack(BaseTrack):
         self.frame_id = frame_id
         self.start_frame = frame_id
 
-    def re_activate(self, new_track, frame_id, new_id=False):
+    def re_activate(self, new_track, frame_id, new_id=False, feature=None):
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh))
         self.tracklet_len = 0
@@ -192,8 +198,19 @@ class STrack(BaseTrack):
         if new_id:
             self.track_id = self.next_id()
         self.score = new_track.score
+        if feature is not None:
+            self.curr_feature = feature
+            self.features.append(feature)
+            if len(self.features) > 50:
+                self.features.pop(0)
 
-    def update(self, new_track, frame_id):
+    def get_feature(self):
+    # 返回最近的特征（或平均特征）
+        if len(self.features) > 0:
+            return self.features[-1]
+        else:
+            return None
+    def update(self, new_track, frame_id, feature=None):
         self.frame_id = frame_id
         self.tracklet_len += 1
         new_tlwh = new_track.tlwh
@@ -202,6 +219,13 @@ class STrack(BaseTrack):
         self.state = TrackState.Tracked
         self.is_activated = True
         self.score = new_track.score
+        # 更新特征
+        if feature is not None:
+            self.curr_feature = feature
+            self.features.append(feature)
+            # 可选：限制特征列表长度，防止内存膨胀
+            if len(self.features) > 50:
+                self.features.pop(0)
 
     @property
     def tlwh(self):
@@ -253,6 +277,42 @@ def joint_stracks(tlista, tlistb):
             res.append(t)
     return res
 
+def compute_feature_distance(tracks, detections):
+    """
+    计算轨迹和检测之间的外观特征距离矩阵
+    
+    Args:
+        tracks: 轨迹对象列表 (STrack 实例)
+        detections: 检测对象列表 (STrack 实例)
+        
+    Returns:
+        feat_dist: 特征距离矩阵 (M, N)，使用余弦距离
+    """
+    m, n = len(tracks), len(detections)
+    if m == 0 or n == 0:
+        return np.zeros((m, n))
+    
+    feat_dist = np.zeros((m, n), dtype=np.float32)
+    
+    for i in range(m):
+        track_feat = tracks[i].curr_feature
+        if track_feat is None:
+            feat_dist[i, :] = 1.0  # 如果轨迹无特征，设为默认距离
+            continue
+        
+        for j in range(n):
+            det_feat = detections[j].curr_feature
+            if det_feat is None:
+                feat_dist[i, j] = 1.0
+                continue
+            
+            # 余弦相似度 = dot(a,b) / (|a|*|b|)，因为已归一化，直接点积
+            sim = np.dot(track_feat, det_feat)
+            # 距离 = 1 - 相似度 (余弦距离范围 0~2，但归一化后相似度接近 1，距离接近 0~0.几)
+            feat_dist[i, j] = 1.0 - sim
+    
+    return feat_dist
+
 def sub_stracks(tlista, tlistb):
     stracks = {}
     for t in tlista:
@@ -294,7 +354,7 @@ def ious(atlbrs, btlbrs):
     iou = inter_area / np.maximum(union_area, 1e-6)
     return iou
 
-@njit(parallel=True, fastmath=True)
+# @njit(parallel=True, fastmath=True,nogil=True,nopython=True)
 def compute_iou_matrix(atlbrs, btlbrs):
     """
     计算两组边界框（tlbr格式）的 IOU 矩阵。
@@ -359,7 +419,7 @@ def iou_distance(atracks, btracks):
     # 调用 Numba 加速函数
     return compute_iou_matrix(atlbrs.astype(np.float32), btlbrs.astype(np.float32))
 
-@njit(parallel=True, fastmath=True)
+# @njit(parallel=True, fastmath=True,nogil=True,nopython=True)
 def fuse_score_matrix(cost_matrix, scores):
     """
     cost_matrix: (M, N) IOU 距离矩阵
@@ -406,6 +466,22 @@ def linear_assignment(cost_matrix, thresh):
 
     return matches, unmatched_rows, unmatched_cols
 
+def fuse_iou_feat_cost(iou_cost, feat_cost, iou_weight=0.5, feat_weight=0.5):
+    """
+    融合 IOU 距离和外观特征距离
+    
+    Args:
+        iou_cost: (M,N) IOU 距离矩阵（0~1）
+        feat_cost: (M,N) 特征距离矩阵（0~2，通常 0~1）
+        iou_weight: IOU 距离权重
+        feat_weight: 特征距离权重
+        
+    Returns:
+        融合后的代价矩阵
+    """
+    return iou_weight * iou_cost + feat_weight * feat_cost
+
+
 class Args:
     def __init__(self, track_thresh=0.5, high_thresh=0.5, low_thresh=0.1, match_thresh=0.8, track_buffer=30):
         self.track_thresh = track_thresh
@@ -416,7 +492,9 @@ class Args:
         self.mot20 = False
 
 class BYTETracker(object):
-    def __init__(self, track_thresh=0.5, high_thresh=0.5, low_thresh=0.1, match_thresh=0.8, track_buffer=30, frame_rate=30):
+    def __init__(self, track_thresh=0.5, high_thresh=0.5, low_thresh=0.1, match_thresh=0.8, 
+                 track_buffer=30, frame_rate=30, use_reid=False, reid_model_path=None,
+                 iou_weight=0.6, feat_weight=0.4):
         self.tracked_stracks = []
         self.lost_stracks = []
         self.removed_stracks = []
@@ -426,8 +504,30 @@ class BYTETracker(object):
         self.buffer_size = int(frame_rate / 30.0 * track_buffer)
         self.max_time_lost = self.buffer_size
         self.kalman_filter = KalmanFilter()
+        
+        # ReID 相关参数
+        self.use_reid = use_reid
+        if use_reid and reid_model_path:
+            from tracker.reid_extractor import ReIDExtractor
+            self.reid_extractor = ReIDExtractor(reid_model_path)
+        else:
+            self.reid_extractor = None
+        
+        # 融合权重
+        self.iou_weight = iou_weight
+        self.feat_weight = feat_weight
 
-    def update(self, output_results):
+    def update(self, output_results, frame=None):
+        """
+        更新跟踪器
+        
+        Args:
+            output_results: 检测结果，格式为 [x1, y1, x2, y2, score] 或包含 tlwh 属性的对象
+            frame: 图像帧，当 use_reid=True 时必需，用于提取 ReID 特征
+            
+        Returns:
+            跟踪结果列表 [[x1, y1, x2, y2, track_id], ...]
+        """
         self.frame_id += 1
         activated_stracks = []
         refind_stracks = []
@@ -461,9 +561,33 @@ class BYTETracker(object):
         scores_keep = scores[remain_inds]
         scores_second = scores[inds_second]
 
-        # 创建高分检测的STrack对象
+        # 如果需要 ReID 特征，先提取特征
+        det_features_high = None
+        det_features_second = None
+        
+        if self.use_reid and frame is not None and self.reid_extractor is not None:
+            # 提取高分检测的 ReID 特征
+            if len(dets_high) > 0:
+                det_features_high = []
+                for tlbr in dets_high:
+                    tlwh = STrack.tlbr_to_tlwh(tlbr)
+                    feat = self.reid_extractor.extract_feature(frame, tlwh)
+                    det_features_high.append(feat)
+            
+            # 提取低分检测的 ReID 特征
+            if len(dets_second) > 0:
+                det_features_second = []
+                for tlbr in dets_second:
+                    tlwh = STrack.tlbr_to_tlwh(tlbr)
+                    feat = self.reid_extractor.extract_feature(frame, tlwh)
+                    det_features_second.append(feat)
+        
+        # 创建高分检测的 STrack 对象（带特征）
         if len(dets_high) > 0:
-            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s) for (tlbr, s) in zip(dets_high, scores_keep)]
+            detections = []
+            for i, (tlbr, s) in enumerate(zip(dets_high, scores_keep)):
+                feat = det_features_high[i] if det_features_high is not None else None
+                detections.append(STrack(STrack.tlbr_to_tlwh(tlbr), s, feature=feat))
         else:
             detections = []
 
@@ -480,7 +604,16 @@ class BYTETracker(object):
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
         STrack.multi_predict(strack_pool)
         
+        # 计算 IOU 距离
         dists = iou_distance(strack_pool, detections)
+        
+        # 如果使用 ReID，融合外观特征距离
+        if self.use_reid and len(strack_pool) > 0 and len(detections) > 0:
+            feat_dists = compute_feature_distance(strack_pool, detections)
+            dists = fuse_iou_feat_cost(dists, feat_dists, 
+                                      iou_weight=self.iou_weight, 
+                                      feat_weight=self.feat_weight)
+        
         dists = fuse_score(dists, detections)
         matches, u_track, u_detection = linear_assignment(dists, thresh=self.args.match_thresh)
         
@@ -498,7 +631,10 @@ class BYTETracker(object):
 
         # 第二次关联：低分检测框
         if len(dets_second) > 0:
-            detections_second = [STrack(STrack.tlbr_to_tlwh(tlbr), s) for (tlbr, s) in zip(dets_second, scores_second)]
+            detections_second = []
+            for i, (tlbr, s) in enumerate(zip(dets_second, scores_second)):
+                feat = det_features_second[i] if det_features_second is not None else None
+                detections_second.append(STrack(STrack.tlbr_to_tlwh(tlbr), s, feature=feat))
         else:
             detections_second = []
 
@@ -509,7 +645,16 @@ class BYTETracker(object):
                 r_tracked_stracks.append(strack_pool[i])
 
         if len(detections_second) > 0 and len(r_tracked_stracks) > 0:
+            # 计算 IOU 距离
             dists = iou_distance(r_tracked_stracks, detections_second)
+            
+            # 如果使用 ReID，融合外观特征距离
+            if self.use_reid:
+                feat_dists = compute_feature_distance(r_tracked_stracks, detections_second)
+                dists = fuse_iou_feat_cost(dists, feat_dists,
+                                          iou_weight=self.iou_weight,
+                                          feat_weight=self.feat_weight)
+            
             matches, u_track_second, u_detection_second = linear_assignment(dists, thresh=0.5)
             
             for itracked, idet in matches:
@@ -532,7 +677,7 @@ class BYTETracker(object):
                     track.mark_lost()
                     lost_stracks.append(track)
         else:
-            # 如果没有低分检测或轨迹，则所有未匹配的高分轨迹标记为lost
+            # 如果没有低分检测或轨迹，则所有未匹配的高分轨迹标记为 lost
             for it in u_track:
                 if it >= len(strack_pool):
                     continue
@@ -550,6 +695,14 @@ class BYTETracker(object):
 
         if len(detections_unmatched) > 0 and len(unconfirmed) > 0:
             dists = iou_distance(unconfirmed, detections_unmatched)
+            
+            # 如果使用 ReID，融合外观特征距离
+            if self.use_reid:
+                feat_dists = compute_feature_distance(unconfirmed, detections_unmatched)
+                dists = fuse_iou_feat_cost(dists, feat_dists,
+                                          iou_weight=self.iou_weight,
+                                          feat_weight=self.feat_weight)
+            
             dists = fuse_score(dists, detections_unmatched)
             matches, u_unconfirmed, u_detection_final = linear_assignment(dists, thresh=0.7)
             
