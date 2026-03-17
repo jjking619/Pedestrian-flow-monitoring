@@ -5,6 +5,7 @@ import os
 import sys
 import threading
 import queue
+import traceback
 from urllib.parse import urlparse
 from tracker.bytetrack import BYTETracker  
 from counter.line_counter import LineCounter
@@ -20,7 +21,7 @@ ONVIF_USER = ""
 ONVIF_PASS = ""
 
 # Global variables for thread communication
-frame_queue = queue.Queue(maxsize=1)  # 只保存最新一帧，自动丢弃旧帧
+frame_queue = queue.Queue(maxsize=1)  # 保存最新帧，自动丢弃旧帧
 result_queue = queue.Queue(maxsize=1)  # Store latest processing result
 stop_event = threading.Event()
 processing_lock = threading.Lock()
@@ -241,18 +242,17 @@ def setup_rtsp_stream(rtsp_url):
 
 def ai_processing_worker(net):
     """Worker thread for AI processing, tracking and counting"""
-    # 使用 ByteTrack，配置参数以优化多人检测效果
+    # 使用 ByteTrack
     tracker = BYTETracker(
         track_thresh=0.5,      # 跟踪阈值
         high_thresh=0.5,       # 高置信度阈值
-        low_thresh=0.1,        # 低置信度阈值（ByteTrack的关键：利用低分检测框）
+        low_thresh=0.1,        # 低置信度阈值（ByteTrack 的关键：利用低分检测框）
         match_thresh=0.8,      # 匹配阈值
         track_buffer=30,       # 跟踪缓冲区大小
-        frame_rate=5         # 帧率
+        frame_rate=5,          # 帧率
+        use_reid=True,         # 启用 ReID 特征
     )
-    counter = LineCounter(line_y=0, offset=3)  # 增大 offset 提高稳定性
-    
-    debug_frame_count = 0  # 添加调试计数器
+    counter = LineCounter(line_y=0, offset=3) 
     
     while not stop_event.is_set():
         try:
@@ -262,7 +262,6 @@ def ai_processing_worker(net):
                 break
                 
             frame, frame_id = frame_data
-            debug_frame_count += 1
                 
             # Update counting line position (middle of frame)
             LINE_Y = frame.shape[0] // 2
@@ -273,7 +272,6 @@ def ai_processing_worker(net):
                 
             # 直接调用tracker.update()，传入frame供内部ReID特征提取
             tracks = tracker.update(persons, frame=frame)
-            
                 
             counter.update(tracks)
                 
@@ -311,7 +309,6 @@ def ai_processing_worker(net):
             continue
         except Exception as e:
             print(f"AI processing error: {e}")
-            import traceback
             traceback.print_exc()
             if not frame_queue.empty():
                 frame_queue.task_done()
@@ -400,12 +397,12 @@ def main():
     print("Press 'ESC' to exit")
     
     # Set window properties
-    cv2.namedWindow("IP Camera Pedestrian Flow", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("IP Camera Pedestrian Flow", FRAME_WIDTH, FRAME_HEIGHT)
+    cv2.namedWindow("Pedestrian Flow Monitor", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("Pedestrian Flow Monitor", FRAME_WIDTH, FRAME_HEIGHT)
     
     frame_id = 0
     last_processed_frame_id = -1
-    last_display_frame = None  # 新增：缓存上一次显示的带标注帧
+    last_display_frame = None  # 缓存上一次显示的带标注帧
 
     try:
         while not stop_event.is_set():
@@ -414,7 +411,7 @@ def main():
                 print("⚠️ Failed to read frame from RTSP stream")
                 break
 
-            # 将新帧放入处理队列（保持原有逻辑，确保队列中始终最新）
+            # 确保队列中始终最新
             try:
                 frame_queue.put((frame.copy(), frame_id), block=False)
             except queue.Full:
@@ -428,7 +425,7 @@ def main():
                 except queue.Full:
                     pass
 
-            # 尝试获取最新处理结果
+            # 获取最新处理结果
             try:
                 result = result_queue.get_nowait()
                 # 只处理比上次更新的帧
@@ -467,17 +464,17 @@ def main():
 
                     # 更新缓存并显示
                     last_display_frame = display_frame.copy()
-                    cv2.imshow("IP Camera Pedestrian Flow", display_frame)
+                    cv2.imshow("Pedestrian Flow Monitor", display_frame)
 
                 result_queue.task_done()
 
             except queue.Empty:
                 # 无新结果时，显示缓存的上一帧（如果存在），否则显示原始帧
                 if last_display_frame is not None:
-                    cv2.imshow("IP Camera Pedestrian Flow", last_display_frame)
+                    cv2.imshow("Pedestrian Flow Monitor", last_display_frame)
                 else:
                     # 刚开始处理时可能还没有缓存，显示原始帧
-                    cv2.imshow("IP Camera Pedestrian Flow", frame)
+                    cv2.imshow("Pedestrian Flow Monitor", frame)
 
             key = cv2.waitKey(1) & 0xFF
             if key == 27:  # ESC
@@ -516,7 +513,6 @@ def main():
     
     cap.release()
     cv2.destroyAllWindows()
-    print("\n👋 Pedestrian flow monitoring stopped.")
 
 if __name__ == "__main__":
     main()

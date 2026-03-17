@@ -52,7 +52,7 @@ class LineCounter:
             else:
                 print(f"  [X] ID={tid}, last_cy={last_cy} -> cy={cy}, crossed line_y={self.line_y}")
                 # 更新历史位置
-                self.track_history[tid] = cy
+            self.track_history[tid] = cy
         
         if self.current_in_count > 0 or self.current_out_count > 0:
             print(f"  [RESULT] IN={self.current_in_count}, OUT={self.current_out_count}, TOTAL={self.total_count}")
@@ -69,10 +69,3 @@ class LineCounter:
         """
         self.line_y = line_y
         
-    
-    def reset_counts(self):
-        """重置所有计数器"""
-        self.current_in_count = 0
-        self.current_out_count = 0
-        self.crossed_tracks.clear()
-        self.track_history.clear()

@@ -3,6 +3,7 @@ import numpy as np
 import numba
 from numba import njit, prange
 from scipy.optimize import linear_sum_assignment
+from tracker.reid_extractor import ReIDExtractor
 
 class TrackState(object):
     New = 0
@@ -489,11 +490,11 @@ class Args:
         self.low_thresh = low_thresh
         self.match_thresh = match_thresh
         self.track_buffer = track_buffer
-        self.mot20 = False
 
 class BYTETracker(object):
     def __init__(self, track_thresh=0.5, high_thresh=0.5, low_thresh=0.1, match_thresh=0.8, 
-                 track_buffer=30, frame_rate=30, use_reid=False, reid_model_path=None,
+                 track_buffer=30, frame_rate=30, use_reid=False, 
+                 reid_model_path="models/osnet_x0_25_market1501.onnx",
                  iou_weight=0.6, feat_weight=0.4):
         self.tracked_stracks = []
         self.lost_stracks = []
@@ -507,8 +508,7 @@ class BYTETracker(object):
         
         # ReID 相关参数
         self.use_reid = use_reid
-        if use_reid and reid_model_path:
-            from tracker.reid_extractor import ReIDExtractor
+        if use_reid:
             self.reid_extractor = ReIDExtractor(reid_model_path)
         else:
             self.reid_extractor = None
