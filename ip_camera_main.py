@@ -8,7 +8,6 @@ import queue
 import traceback
 from urllib.parse import urlparse
 from tracker.bytetrack import BYTETracker  
-from counter.line_counter import LineCounter
 
 from wsdiscovery import WSDiscovery
 from onvif import ONVIFCamera
@@ -159,9 +158,9 @@ def letterbox(
 def yolo_v5_person_infer(
     frame,
     net,
-    conf_thresh=0.4,
+    conf_thresh=0.35,
     iou_thresh=0.45,
-    input_size=416
+    input_size=640
 ):
     """
     OpenCV DNN + YOLOv5n ONNX
@@ -241,7 +240,7 @@ def setup_rtsp_stream(rtsp_url):
     return cap
 
 def ai_processing_worker(net):
-    """Worker thread for AI processing, tracking and counting"""
+    """Worker thread for AI processing and tracking"""
     # 使用 ByteTrack
     tracker = BYTETracker(
         track_thresh=0.5,      # 跟踪阈值
@@ -252,7 +251,6 @@ def ai_processing_worker(net):
         frame_rate=5,          # 帧率
         use_reid=True,         # 启用 ReID 特征
     )
-    counter = LineCounter(line_y=0, offset=3) 
     
     while not stop_event.is_set():
         try:
@@ -263,20 +261,14 @@ def ai_processing_worker(net):
                 
             frame, frame_id = frame_data
                 
-            # Update counting line position (middle of frame)
-            LINE_Y = frame.shape[0] // 2
-            counter.set_line_y(LINE_Y)
-                
-            # Run person detection - 降低置信度阈值以提高检测灵敏度
-            persons = yolo_v5_person_infer(frame, net, conf_thresh=0.3, iou_thresh=0.45)
+            # Run person detection
+            persons = yolo_v5_person_infer(frame, net,)
                 
             # 直接调用tracker.update()，传入frame供内部ReID特征提取
             tracks = tracker.update(persons, frame=frame)
-                
-            counter.update(tracks)
-                
-            # 获取实时计数
-            in_count, out_count, total_count = counter.get_counts()
+            
+            # 统计总人数（跟踪目标数量）
+            total_count = len(tracks)
             
             # Put results in result queue (overwrite old results if queue is full)
             try:
@@ -284,8 +276,7 @@ def ai_processing_worker(net):
                     'frame': frame,
                     'persons': persons,
                     'tracks': tracks,
-                    'counts': (in_count, out_count, total_count),
-                    'line_y': LINE_Y,
+                    'total_count': total_count,
                     'frame_id': frame_id
                 })
             except queue.Full:
@@ -296,8 +287,7 @@ def ai_processing_worker(net):
                         'frame': frame,
                         'persons': persons,
                         'tracks': tracks,
-                        'counts': (in_count, out_count, total_count),
-                        'line_y': LINE_Y,
+                        'total_count': total_count,
                         'frame_id': frame_id
                     })
                 except queue.Empty:
@@ -363,7 +353,7 @@ def main():
     
     # Step 4: Load YOLOv5 model
     try:
-        net = cv2.dnn.readNetFromONNX("models/yolov5n_416.onnx")
+        net = cv2.dnn.readNetFromONNX("models/yolov5n_640.onnx")
         print("✅ YOLOv5 model loaded successfully")
     except Exception as e:
         print(f"❌ Failed to load YOLOv5 model: {e}")
@@ -433,9 +423,7 @@ def main():
                     # 构建带标注的显示帧
                     display_frame = result['frame'].copy()
                     persons = result['persons']
-                    # 现在 counts 包含 (in_count, out_count, total_count)
-                    in_count, out_count, total_count = result['counts']
-                    LINE_Y = result['line_y']
+                    total_count = result['total_count']
                     last_processed_frame_id = result['frame_id']
 
                     # 绘制检测框
@@ -450,17 +438,10 @@ def main():
                             (0, 255, 0),
                             1
                         )
-
-                    # 绘制计数线（黄色，更明显）
-                    cv2.line(display_frame, (0, LINE_Y), (display_frame.shape[1], LINE_Y), (0, 255, 255), 3)
                     
-                    # 显示实时计数信息
+                    # 显示总人数统计信息
                     cv2.putText(display_frame, f"Total Count: {total_count}", (20, 80),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                    cv2.putText(display_frame, f"IN Count: {in_count}", (20, 120),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    cv2.putText(display_frame, f"OUT Count: {out_count}", (20, 160),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
                     # 更新缓存并显示
                     last_display_frame = display_frame.copy()
