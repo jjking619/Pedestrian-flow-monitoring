@@ -355,7 +355,7 @@ def ious(atlbrs, btlbrs):
     iou = inter_area / np.maximum(union_area, 1e-6)
     return iou
 
-# @njit(parallel=True, fastmath=True,nogil=True,nopython=True)
+@njit(parallel=True, fastmath=True,nogil=True,nopython=True)
 def compute_iou_matrix(atlbrs, btlbrs):
     """
     计算两组边界框（tlbr格式）的 IOU 矩阵。
@@ -420,7 +420,7 @@ def iou_distance(atracks, btracks):
     # 调用 Numba 加速函数
     return compute_iou_matrix(atlbrs.astype(np.float32), btlbrs.astype(np.float32))
 
-# @njit(parallel=True, fastmath=True,nogil=True,nopython=True)
+@njit(parallel=True, fastmath=True,nogil=True,nopython=True)
 def fuse_score_matrix(cost_matrix, scores):
     """
     cost_matrix: (M, N) IOU 距离矩阵
@@ -472,8 +472,8 @@ def fuse_iou_feat_cost(iou_cost, feat_cost, iou_weight=0.5, feat_weight=0.5):
     融合 IOU 距离和外观特征距离
     
     Args:
-        iou_cost: (M,N) IOU 距离矩阵（0~1）
-        feat_cost: (M,N) 特征距离矩阵（0~2，通常 0~1）
+        iou_cost: (M,N) IOU 距离矩阵(0~1)
+        feat_cost: (M,N) 特征距离矩阵(0~2,通常 0~1)
         iou_weight: IOU 距离权重
         feat_weight: 特征距离权重
         
