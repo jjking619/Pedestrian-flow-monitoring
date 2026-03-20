@@ -12,6 +12,7 @@ import os
 import sys
 import argparse
 from tracker.bytetrack import BYTETracker
+from counter.line_counter import LineCounter
 
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
@@ -48,7 +49,7 @@ def yolo_v5_person_infer(
     net,
     conf_thresh=0.25,
     iou_thresh=0.5,
-    input_size=640
+    input_size=416
 ):
     """
     OpenCV DNN + YOLOv5n ONNX
@@ -100,11 +101,6 @@ def yolo_v5_person_infer(
         x2 = max(0, min(int(x + w), w0 - 1))
         y2 = max(0, min(int(y + h), h0 - 1))
 
-        # 新增：验证坐标有效性
-        if x1 >= x2 or y1 >= y2:
-            print(f"⚠️ 检测框坐标无效：x1={x1}, x2={x2}, y1={y1}, y2={y2}")
-            continue
-
         boxes.append([x1, y1, x2 - x1, y2 - y1])
         scores.append(float(score))
 
@@ -123,7 +119,7 @@ def yolo_v5_person_infer(
         x, y, w, h = boxes[i]
         results.append([x, y, x + w, y + h, scores[i]])
 
-    print(f"✅ YOLOv5 检测到 {len(results)} 个人形目标")
+    # print(f"✅ YOLOv5 检测到 {len(results)} 个人形目标")
     return results
 
 def setup_video_capture(video_source):
@@ -147,7 +143,7 @@ def main():
     parser = argparse.ArgumentParser(description='Pedestrian Flow Monitoring with Video File (Simple Version)')
     parser.add_argument('--video', type=str, default='street.mp4', 
                        help='Path to video file (default: street.mp4)')
-    parser.add_argument('--model', type=str, default='models/yolov5n_640.onnx',
+    parser.add_argument('--model', type=str, default='models/yolov5n_416.onnx',
                        help='Path to YOLOv5 ONNX model')
     args = parser.parse_args()
 
@@ -182,12 +178,14 @@ def main():
         use_reid=True,         # 启用 ReID 特征
     )
     
+    # 初始化计数器（将在处理第一帧时动态设置计数线）
+    counter = None
+    
     # Set window properties
     cv2.namedWindow("Pedestrian Flow Monitor", cv2.WINDOW_NORMAL)
     cv2.resizeWindow("Pedestrian Flow Monitor", FRAME_WIDTH, FRAME_HEIGHT)
     
     frame_id = 0
-    total_detected_count = 0
     print("\n🚀 Starting pedestrian flow monitoring with video file...")
     print("Press 'ESC' to exit")
 
@@ -201,30 +199,54 @@ def main():
             # Run person detection
             persons = yolo_v5_person_infer(frame, net)
             
-            # Update total count
-            total_detected_count += len(persons)
-            
             # Run tracking with ReID
             tracks = tracker.update(persons, frame=frame)
+            
+            # 提取ReID特征用于去重统计
+            features = []
+            if hasattr(tracker, 'tracked_stracks') and len(tracker.tracked_stracks) > 0:
+                # 从跟踪器中获取当前帧的特征
+                track_dict = {track.track_id: track.curr_feature for track in tracker.tracked_stracks if track.is_activated}
+                for track in tracks:
+                    track_id = track[4]
+                    features.append(track_dict.get(track_id, None))
+            else:
+                features = [None] * len(tracks)
+            
+            # 初始化计数器（第一次处理帧时）
+            if counter is None:
+                line_y = frame.shape[0] // 2  # 画面中央作为计数线
+                # 动态设置容差：至少5像素，最多为高度的1%
+                offset = max(5, frame.shape[0] // 100)
+                counter = LineCounter(line_y=line_y, offset=offset)
+            
+            # 更新计数器
+            counter.update(tracks)
+            in_count, out_count, total_unique_count, total_count = counter.get_counts()
             
             # Draw detection boxes (green)
             for x1, y1, x2, y2, score in persons:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(frame, f"det {score:.2f}", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
-
-            # # Draw tracking boxes (blue)
-            # for x1, y1, x2, y2, track_id in tracks:
-            #     cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-            #     cv2.putText(frame, f"ID:{track_id}", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1)
+            # Draw 
                 
+            # 绘制计数线
+            if counter is not None:
+                cv2.line(frame, (0, counter.line_y), (frame.shape[1], counter.line_y), (255, 0, 0), 2)
+                # 绘制容差区域（可选）
+                # cv2.line(frame, (0, counter.line_y - counter.offset), (frame.shape[1], counter.line_y - counter.offset), (255, 100, 100), 1)
+                # cv2.line(frame, (0, counter.line_y + counter.offset), (frame.shape[1], counter.line_y + counter.offset), (255, 100, 100), 1)
+
             # Display statistics
-            cv2.putText(frame, f"Current frame detections: {len(persons)}", (20, 30),
+            cv2.putText(frame, f"Current Count: {total_count}", (20, 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-            # cv2.putText(frame, f"Total detected so far: {total_detected_count}", (20, 70),
-            #            cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
-            # cv2.putText(frame, f"Active tracks: {len(tracks)}", (20, 110),
-            #            cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
-            
+            cv2.putText(frame, f"IN: {in_count}", (20, 70),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(frame, f"OUT: {out_count}", (20, 110),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            cv2.putText(frame, f"Total Unique: {total_unique_count}", (20, 150),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+
             cv2.imshow("Pedestrian Flow Monitor", frame)
 
             key = cv2.waitKey(1) & 0xFF
@@ -239,9 +261,16 @@ def main():
     
     # Cleanup
     print(f"\n📊 Final Results:")
-    print(f"   Total frames processed: {frame_id}")
-    print(f"   Total detections: {total_detected_count}")
-    print(f"   Average detections per frame: {total_detected_count/frame_id if frame_id > 0 else 0:.2f}")
+    if counter is not None:
+        in_final, out_final, total_unique_final, total_final = counter.get_counts()
+        print(f"   Total frames processed: {frame_id}")
+        print(f"   Final IN count: {in_final}")
+        print(f"   Final OUT count: {out_final}")
+        print(f"   Final Total Unique: {total_unique_final}")
+        print(f"   Final Current Count: {total_final}")
+    else:
+        print(f"   Total frames processed: {frame_id}")
+        print(f"   No tracking data available")
     
     print("\n🧹 Cleaning up resources...")
     cap.release()

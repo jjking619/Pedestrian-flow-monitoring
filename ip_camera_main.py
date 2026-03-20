@@ -8,6 +8,7 @@ import queue
 import traceback
 from urllib.parse import urlparse
 from tracker.bytetrack import BYTETracker  
+from counter.line_counter import LineCounter
 
 from wsdiscovery import WSDiscovery
 from onvif import ONVIFCamera
@@ -15,12 +16,8 @@ from onvif import ONVIFCamera
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 
-# Default authentication (can be modified as needed)
-ONVIF_USER = ""
-ONVIF_PASS = ""
-
 # Global variables for thread communication
-frame_queue = queue.Queue(maxsize=2)  # 增加队列大小，减少丢帧
+frame_queue = queue.Queue(maxsize=2)  # 队列，用于存储处理结果
 result_queue = queue.Queue(maxsize=1)  # Store latest processing result
 stop_event = threading.Event()
 processing_lock = threading.Lock()
@@ -158,9 +155,9 @@ def letterbox(
 def yolo_v5_person_infer(
     frame,
     net,
-    conf_thresh=0.3,
+    conf_thresh=0.25,
     iou_thresh=0.45,
-    input_size=640
+    input_size=416
 ):
     """
     OpenCV DNN + YOLOv5n ONNX
@@ -239,18 +236,22 @@ def setup_rtsp_stream(rtsp_url):
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap
 
-def ai_processing_worker(net,actual_fps):
+def ai_processing_worker(net, actual_fps):
     """Worker thread for AI processing and tracking"""
     # 使用 ByteTrack
     tracker = BYTETracker(
         track_thresh=0.5,      # 跟踪阈值
         high_thresh=0.5,       # 高置信度阈值
         low_thresh=0.1,        # 低置信度阈值（ByteTrack 的关键：利用低分检测框）
-        match_thresh=0.8,      # 匹配阈值
+        match_thresh=0.7,      # 匹配阈值
         track_buffer=30,       # 跟踪缓冲区大小
         frame_rate=actual_fps,          # 帧率
         use_reid=True,         # 启用 ReID 特征
     )
+    
+    # 初始化计数器（计数线设为画面中央）
+    line_y = 0  # 将在处理第一帧时动态设置
+    counter = None
     
     while not stop_event.is_set():
         try:
@@ -279,9 +280,17 @@ def ai_processing_worker(net,actual_fps):
             # 直接调用tracker.update()，传入frame供内部ReID特征提取
             tracks = tracker.update(persons, frame=frame)
             
-            # 统计总人数
-            total_count = len(persons)
-            
+            # 初始化计数器（第一次处理帧时）
+            if counter is None:
+                line_y = frame.shape[0] // 2  # 画面中央作为计数线
+                # 动态设置容差：至少5像素，最多为高度的1%
+                offset = max(5, frame.shape[0] // 100)
+                counter = LineCounter(line_y=line_y, offset=offset)
+
+            # 更新计数器
+            counter.update(tracks)
+            in_count, out_count, total_unique_count, total_count = counter.get_counts()
+
             # Put results in result queue (overwrite old results if queue is full)
             try:
                 result_queue.put_nowait({
@@ -289,7 +298,11 @@ def ai_processing_worker(net,actual_fps):
                     'persons': persons,
                     'tracks': tracks,
                     'total_count': total_count,
-                    'frame_id': frame_id
+                    'in_count': in_count,
+                    'out_count': out_count,
+                    'total_unique_count': total_unique_count,  # 使用新的字段名
+                    'frame_id': frame_id,
+                    'line_y': line_y
                 })
             except queue.Full:
                 # Remove old result and add new one
@@ -300,7 +313,11 @@ def ai_processing_worker(net,actual_fps):
                         'persons': persons,
                         'tracks': tracks,
                         'total_count': total_count,
-                        'frame_id': frame_id
+                        'in_count': in_count,
+                        'out_count': out_count,
+                        'total_unique_count': total_unique_count,  # 使用新的字段名
+                        'frame_id': frame_id,
+                        'line_y': line_y
                     })
                 except queue.Empty:
                     pass
@@ -312,27 +329,17 @@ def ai_processing_worker(net,actual_fps):
             traceback.print_exc()
 
 def main():
-
-    # Step 1: Discover ONVIF devices
-    print("\n🔍 Searching for ONVIF devices...")
-    devices = discover_onvif_devices(timeout=5)
+    # Step 1: Skip discovery - Directly specify the camera info
+    print("\n📡 Connecting to camera directly...")
     
-    if not devices:
-        print("❌ No ONVIF devices found. Please check your network connection.")
-        sys.exit(1)
+    # 🔧 Manually specify camera details (replace with your actual values)
+    HOST = "192.168.177.227"  # Your camera's IP address
+    PORT = 80                 # HTTP port, usually 80 or 8080
+    ONVIF_USER = ""           # Username (if required)
+    ONVIF_PASS = ""           # Password (if required)
     
-    print(f"✅ Found {len(devices)} ONVIF device(s):")
-    for i, url in enumerate(devices, 1):
-        print(f"  [{i}] {url}")
-    
-    # Step 2: Connect to the first device and get profiles
-    dev_url = devices[0]
-    print(f"\n📡 Connecting to device: {dev_url}")
-    parsed = urlparse(dev_url)
-    host = parsed.hostname
-    port = parsed.port or 80
-    
-    profiles = get_all_profiles(host, port, ONVIF_USER, ONVIF_PASS)
+    # Step 2: Connect to the device and get profiles (using manual info)
+    profiles = get_all_profiles(HOST, PORT, ONVIF_USER, ONVIF_PASS)
     if not profiles:
         print("❌ Cannot get Profile info from the device.")
         sys.exit(1)
@@ -360,11 +367,11 @@ def main():
     
     # Step 4: Load YOLOv5 model
     try:
-        net = cv2.dnn.readNetFromONNX("models/yolov5n_640.onnx")
+        net = cv2.dnn.readNetFromONNX("models/yolov5n_416.onnx")
         print("✅ YOLOv5 model loaded successfully")
     except Exception as e:
         print(f"❌ Failed to load YOLOv5 model: {e}")
-        print("Please ensure the model file exists at 'models/yolov5n_416.onnx'")
+        print("Please ensure the model file exists at 'models/yolov5n_640.onnx'")
         sys.exit(1)
     
     # Step 5: Setup video capture
@@ -385,18 +392,18 @@ def main():
     
     # Step 6: Start AI processing worker thread
     print("\n🧵 Starting AI processing worker thread...")
-    worker_thread = threading.Thread(target=ai_processing_worker, args=(net,actual_fps))
+    worker_thread = threading.Thread(target=ai_processing_worker, args=(net, actual_fps))
     worker_thread.daemon = True
     worker_thread.start()
-    
+
     # Step 7: Start main processing loop (frame capture)
     print("\n🚀 Starting pedestrian flow monitoring...")
     print("Press 'ESC' to exit")
-    
+
     # Set window properties
     cv2.namedWindow("Pedestrian Flow Monitor", cv2.WINDOW_NORMAL)
     cv2.resizeWindow("Pedestrian Flow Monitor", FRAME_WIDTH, FRAME_HEIGHT)
-    
+
     frame_id = 0
     last_processed_frame_id = -1
     last_display_frame = None  # 缓存上一次显示的带标注帧
@@ -445,8 +452,12 @@ def main():
                 display_frame = result['frame'].copy()
                 persons = result['persons']
                 total_count = result['total_count']
+                in_count = result['in_count']
+                out_count = result['out_count']
+                total_unique_count = result['total_unique_count']  # 使用新的字段名
                 current_frame_id = result['frame_id']
-                
+                line_y = result['line_y'] 
+
                 # 更新最后处理的帧ID
                 last_processed_frame_id = current_frame_id
 
@@ -462,9 +473,18 @@ def main():
                         (0, 255, 0),
                         1
                     )
-                # 显示总人数统计信息
-                cv2.putText(display_frame, f"Total Count: {total_count}", (20, 80),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                
+                # 绘制计数线
+                cv2.line(display_frame, (0, line_y), (display_frame.shape[1], line_y), (255, 0, 0), 2)
+                # 显示计数统计信息
+                cv2.putText(display_frame, f"Current Count: {total_count}", (20, 80),
+                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                cv2.putText(display_frame, f"IN Count: {in_count}", (20, 110),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(display_frame, f"OUT Count: {out_count}", (20, 140),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.putText(display_frame, f"Total Count: {total_unique_count}", (20, 170),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
                 # 更新缓存并显示
                 last_display_frame = display_frame.copy()

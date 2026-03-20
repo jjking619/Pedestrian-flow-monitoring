@@ -1,19 +1,12 @@
 import cv2
 import numpy as np
 
-
 class ReIDExtractor:
     """
     基于 OSNet 的行人重识别特征提取器
     使用 ONNX 模型为检测到的行人提取外观特征向量
     """
-    
     def __init__(self, model_path="models/osnet_x0_25_market1501.onnx"):
-        """
-        初始化 ReID 模型
-        Args:
-            model_path: ONNX 模型路径
-        """
         self.net = cv2.dnn.readNetFromONNX(model_path)
         self.input_size = (256, 128)  # OSNet 标准输入尺寸
         self.mean = np.array([0.485, 0.456, 0.406])
@@ -79,13 +72,11 @@ class ReIDExtractor:
             return feature
             
         except Exception as e:
-            # print(f"ReID 特征提取失败：{e}")
             return None
     
     def batch_extract(self, frame, detections):
         """
         批量提取多个行人的特征
-        
         Args:
             frame: 输入图像帧
             detections: 检测结果列表，每个元素包含 tlwh 信息

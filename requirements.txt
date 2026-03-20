@@ -1,6 +1,3 @@
-# YOLOv5 requirements
-# Usage: pip install -r requirements.txt
-
 # Base ------------------------------------------------------------------------
 gitpython>=3.1.30
 matplotlib>=3.3
@@ -18,36 +15,17 @@ tqdm>=4.66.3
 ultralytics>=8.2.64  # https://ultralytics.com
 # protobuf<=3.20.1  # https://github.com/ultralytics/yolov5/issues/8012
 
-# Logging ---------------------------------------------------------------------
-# tensorboard>=2.4.1
-# clearml>=1.2.0
-# comet
-
 # Plotting --------------------------------------------------------------------
 pandas>=1.1.4
 seaborn>=0.11.0
 
-# Export ----------------------------------------------------------------------
-# coremltools>=6.0  # CoreML export
-# onnx>=1.10.0  # ONNX export
-# onnx-simplifier>=0.4.1  # ONNX simplifier
-# nvidia-pyindex  # TensorRT export
-# nvidia-tensorrt  # TensorRT export
-# scikit-learn<=1.1.2  # CoreML quantization
-# tensorflow>=2.4.0,<=2.13.1  # TF exports (-cpu, -aarch64, -macos)
-# tensorflowjs>=3.9.0  # TF.js export
-# openvino-dev>=2023.0  # OpenVINO export
 
 # Deploy ----------------------------------------------------------------------
 packaging  # Migration of deprecated pkg_resources packages
 setuptools>=70.0.0 # Snyk vulnerability fix
-# tritonclient[all]~=2.24.0
 
 # Extras ----------------------------------------------------------------------
-# ipython  # interactive notebook
-# mss  # screenshots
-# albumentations>=1.0.3
-# pycocotools>=2.0.6  # COCO mAP
+
 urllib3>=2.6.0 ; python_version > "3.8" # not directly required, pinned by Snyk to avoid a vulnerability
 
 # Additional Dependencies -----------------------------------------------------
@@ -57,4 +35,5 @@ filterpy>=1.4.5  # Kalman filter implementation for object tracking
 onvif-zeep>=4.3.0  # ONVIF protocol implementation
 wsdiscovery>=2.0.0  # WS-Discovery for ONVIF device discovery
 
-numba >=0.64.0  # Numba for GPU acceleration
+numba >=0.64.0  # 
+
