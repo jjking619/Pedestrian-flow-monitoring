@@ -285,11 +285,11 @@ def ai_processing_worker(net, actual_fps):
                 line_y = frame.shape[0] // 2  # 画面中央作为计数线
                 # 动态设置容差：至少5像素，最多为高度的1%
                 offset = max(5, frame.shape[0] // 100)
-                counter = LineCounter(line_y=line_y, offset=offset)
+                counter = LineCounter()
 
             # 更新计数器
             counter.update(tracks)
-            in_count, out_count, total_unique_count, total_count = counter.get_counts()
+            total_unique_count, total_count = counter.get_counts()
 
             # Put results in result queue (overwrite old results if queue is full)
             try:
@@ -298,11 +298,8 @@ def ai_processing_worker(net, actual_fps):
                     'persons': persons,
                     'tracks': tracks,
                     'total_count': total_count,
-                    'in_count': in_count,
-                    'out_count': out_count,
                     'total_unique_count': total_unique_count,  # 使用新的字段名
                     'frame_id': frame_id,
-                    'line_y': line_y
                 })
             except queue.Full:
                 # Remove old result and add new one
@@ -313,11 +310,8 @@ def ai_processing_worker(net, actual_fps):
                         'persons': persons,
                         'tracks': tracks,
                         'total_count': total_count,
-                        'in_count': in_count,
-                        'out_count': out_count,
                         'total_unique_count': total_unique_count,  # 使用新的字段名
                         'frame_id': frame_id,
-                        'line_y': line_y
                     })
                 except queue.Empty:
                     pass
@@ -452,12 +446,8 @@ def main():
                 display_frame = result['frame'].copy()
                 persons = result['persons']
                 total_count = result['total_count']
-                in_count = result['in_count']
-                out_count = result['out_count']
                 total_unique_count = result['total_unique_count']  # 使用新的字段名
                 current_frame_id = result['frame_id']
-                line_y = result['line_y'] 
-
                 # 更新最后处理的帧ID
                 last_processed_frame_id = current_frame_id
 
@@ -474,16 +464,10 @@ def main():
                         1
                     )
                 
-                # 绘制计数线
-                cv2.line(display_frame, (0, line_y), (display_frame.shape[1], line_y), (255, 0, 0), 2)
                 # 显示计数统计信息
                 cv2.putText(display_frame, f"Current Count: {total_count}", (20, 80),
                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(display_frame, f"IN Count: {in_count}", (20, 110),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                cv2.putText(display_frame, f"OUT Count: {out_count}", (20, 140),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                cv2.putText(display_frame, f"Total Count: {total_unique_count}", (20, 170),
+                cv2.putText(display_frame, f"Total Count: {total_unique_count}", (20, 110),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
                 # 更新缓存并显示

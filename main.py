@@ -1,40 +1,59 @@
+#!/usr/bin/env python3
 import cv2
 import numpy as np
 import os
-from tracker.sort import Sort
+import sys
+import threading
+import queue
+import traceback
+from tracker.bytetrack import BYTETracker  
 from counter.line_counter import LineCounter
 
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 
-tracker = Sort()
-# 修改: 添加 line_y 参数
-counter = LineCounter(line_y=0)  # 初始化时设置 line_y，后续会动态更新
+# Global variables for thread communication
+frame_queue = queue.Queue(maxsize=2)
+result_queue = queue.Queue(maxsize=1)
+stop_event = threading.Event()
 
 def find_available_camera():
-        """Automatically detect available camera"""
-        #debug("Searching for available camera devices...")
-        # First try the default cameras (0-9)
-        for i in range(10):
-            temp_cap = None
-            try:
-                temp_cap = cv2.VideoCapture(i)
-                if temp_cap.isOpened():
-                    ret, frame = temp_cap.read()
-                    if ret:
-                        temp_cap.release()
-                        #debug(f"Found available camera at device ID: {i}")
-                        return i
-            except Exception as e:
-                error(f"Error checking camera {i}: {e}")
-            finally:
-                if temp_cap is not None:
-                    try:
-                        temp_cap.release()
-                    except:
-                        error(f"Error temp_cap.release(): {e}")
-        error("No available camera device found")
-        return None
+    """Automatically detect available camera"""
+    print("🔍 Searching for available camera devices...")
+    # First try the default cameras (0-9)
+    for i in range(10):
+        temp_cap = None
+        try:
+            temp_cap = cv2.VideoCapture(i)
+            if temp_cap.isOpened():
+                ret, frame = temp_cap.read()
+                if ret:
+                    temp_cap.release()
+                    print(f"✅ Found available camera at device ID: {i}")
+                    return i
+        except Exception as e:
+            print(f"❌ Error checking camera {i}: {e}")
+        finally:
+            if temp_cap is not None:
+                try:
+                    temp_cap.release()
+                except Exception as e:
+                    print(f"❌ Error releasing camera {i}: {e}")
+    print("❌ No available camera device found")
+    return None
+
+def setup_usb_camera(camera_index):
+    """Setup USB camera with optimal settings"""
+    cap = cv2.VideoCapture(camera_index)
+    
+    # Set buffer size to minimize latency
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    
+    # Try to set reasonable resolution (lower resolution for better performance on Pi)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    
+    return cap
 
 def letterbox(
     img,
@@ -66,9 +85,9 @@ def letterbox(
 def yolo_v5_person_infer(
     frame,
     net,
-    conf_thresh=0.4,
+    conf_thresh=0.25,
     iou_thresh=0.45,
-    input_size=320
+    input_size=416
 ):
     """
     OpenCV DNN + YOLOv5n ONNX
@@ -140,66 +159,267 @@ def yolo_v5_person_infer(
 
     return results
 
+def ai_processing_worker(net, actual_fps):
+    """Worker thread for AI processing and tracking"""
+    # 使用 ByteTrack（与IP摄像头版本保持一致）
+    tracker = BYTETracker(
+        track_thresh=0.5,      # 跟踪阈值
+        high_thresh=0.5,       # 高置信度阈值
+        low_thresh=0.1,        # 低置信度阈值（ByteTrack 的关键：利用低分检测框）
+        match_thresh=0.7,      # 匹配阈值
+        track_buffer=30,       # 跟踪缓冲区大小
+        frame_rate=actual_fps, # 帧率
+        use_reid=True,         # 启用 ReID 特征
+    )
+    
+    # 初始化计数器
+    counter = None
+    
+    while not stop_event.is_set():
+        try:
+            # 获取最新帧 - 清空队列中的旧帧，只处理最新的一帧
+            frame_data = None
+            while not frame_queue.empty():
+                try:
+                    frame_data = frame_queue.get_nowait()
+                    frame_queue.task_done()
+                except queue.Empty:
+                    break
+            
+            if frame_data is None:
+                # 如果队列为空，等待新帧
+                frame_data = frame_queue.get(timeout=1.0)
+                frame_queue.task_done()
+                
+            if frame_data is None:
+                break
+                
+            frame, frame_id = frame_data
+                
+            # Run person detection
+            persons = yolo_v5_person_infer(frame, net)
+                
+            # 直接调用tracker.update()，传入frame供内部ReID特征提取
+            tracks = tracker.update(persons, frame=frame)
+            
+            # 初始化计数器（第一次处理帧时）
+            if counter is None:
+                line_y = frame.shape[0] // 2  # 画面中央作为计数线
+                counter = LineCounter()
 
-net = cv2.dnn.readNetFromONNX("models/yolov5n_320.onnx")
-CAMERA_INDEX = find_available_camera()
-cap = cv2.VideoCapture(CAMERA_INDEX)
+            # 更新计数器
+            counter.update(tracks)
+            total_unique_count, total_count = counter.get_counts()
 
-#降低分辨率减少算力压力
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 360)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+            # Put results in result queue (overwrite old results if queue is full)
+            try:
+                result_queue.put_nowait({
+                    'frame': frame,
+                    'persons': persons,
+                    'tracks': tracks,
+                    'total_count': total_count,
+                    'total_unique_count': total_unique_count,
+                    'frame_id': frame_id,
+                })
+            except queue.Full:
+                # Remove old result and add new one
+                try:
+                    result_queue.get_nowait()
+                    result_queue.put_nowait({
+                        'frame': frame,
+                        'persons': persons,
+                        'tracks': tracks,
+                        'total_count': total_count,
+                        'total_unique_count': total_unique_count,
+                        'frame_id': frame_id,
+                    })
+                except queue.Empty:
+                    pass
+                    
+        except queue.Empty:
+            continue
+        except Exception as e:
+            print(f"AI processing error: {e}")
+            traceback.print_exc()
 
+def main():
+    # Step 1: Find available USB camera
+    print("\n📷 Finding USB camera...")
+    CAMERA_INDEX = find_available_camera()
+    if CAMERA_INDEX is None:
+        print("❌ No USB camera found. Exiting...")
+        sys.exit(1)
+    
+    # Step 2: Setup video capture
+    print(f"\n🎥 Setting up USB camera (device {CAMERA_INDEX})...")
+    cap = setup_usb_camera(CAMERA_INDEX)
+    
+    if not cap.isOpened():
+        print("❌ Failed to open USB camera")
+        sys.exit(1)
+    
+    # Get actual frame dimensions
+    actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    actual_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0  # Default to 30 if not available
+    
+    print(f"  Frame dimensions: {actual_width}x{actual_height}")
+    print(f"  Frame rate: {actual_fps:.2f} fps")
+    
+    # Step 3: Load YOLOv5 model
+    print("\n🧠 Loading YOLOv5 model...")
+    try:
+        # Try to load the larger model first (416), fallback to smaller (320) if needed
+        model_path = "models/yolov5n_416.onnx"
+        if not os.path.exists(model_path):
+            model_path = "models/yolov5n_320.onnx"
+            if not os.path.exists(model_path):
+                print(f"❌ Model file not found at models/yolov5n_416.onnx or models/yolov5n_320.onnx")
+                sys.exit(1)
+        
+        net = cv2.dnn.readNetFromONNX(model_path)
+        print(f"✅ YOLOv5 model loaded successfully from {model_path}")
+    except Exception as e:
+        print(f"❌ Failed to load YOLOv5 model: {e}")
+        sys.exit(1)
+    
+    # Step 4: Start AI processing worker thread
+    print("\n🧵 Starting AI processing worker thread...")
+    worker_thread = threading.Thread(target=ai_processing_worker, args=(net, actual_fps))
+    worker_thread.daemon = True
+    worker_thread.start()
 
-# 设置窗口大小
-cv2.namedWindow("YOLOv5n Person", cv2.WINDOW_NORMAL)
-cv2.resizeWindow("YOLOv5n Person", FRAME_WIDTH, FRAME_HEIGHT)
+    # Step 5: Start main processing loop (frame capture)
+    print("\n🚀 Starting pedestrian flow monitoring with USB camera...")
+    print("Press 'ESC' to exit")
 
-frame_id = 0
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+    # Set window properties
+    cv2.namedWindow("Pedestrian Flow Monitor (USB)", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("Pedestrian Flow Monitor (USB)", FRAME_WIDTH, FRAME_HEIGHT)
 
-    # 统计线设为画面一半
-    LINE_Y = frame.shape[0] // 2
-    # 修改: 更新 line_y
-    counter.set_line_y(LINE_Y)
+    frame_id = 0
+    last_processed_frame_id = -1
+    last_display_frame = None
+    startup_phase = True
 
-    persons = yolo_v5_person_infer(frame, net)
-    tracks = tracker.update(persons)
-    counter.update(tracks)
+    try:
+        while not stop_event.is_set():
+            ret, frame = cap.read()
+            if not ret:
+                print("⚠️ Failed to read frame from USB camera")
+                break
 
-    in_count, out_count = counter.get_counts()
-    total_count = counter.total_count  # 获取总人数
+            # 确保队列中始终有最新帧
+            try:
+                frame_queue.put((frame.copy(), frame_id), block=False)
+            except queue.Full:
+                try:
+                    frame_queue.get(block=False)
+                    frame_queue.task_done()
+                except queue.Empty:
+                    pass
+                try:
+                    frame_queue.put((frame.copy(), frame_id), block=False)
+                except queue.Full:
+                    pass
 
-    # 可视化
-    for x1, y1, x2, y2, score in persons:
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(
-            frame,
-            f"person {score:.2f}",
-            (x1, y1 - 5),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 0),
-            2
-        )
+            # 获取最新处理结果
+            result = None
+            try:
+                # 清空旧的结果，只保留最新的
+                while not result_queue.empty():
+                    try:
+                        result = result_queue.get_nowait()
+                        result_queue.task_done()
+                    except queue.Empty:
+                        break
+                if result is None and not result_queue.empty():
+                    result = result_queue.get_nowait()
+                    result_queue.task_done()
+            except queue.Empty:
+                pass
 
-    # 画统计线
-    cv2.line(frame, (0, LINE_Y), (frame.shape[1], LINE_Y), (255, 0, 0), 2)
+            # 显示逻辑优化
+            if result is not None and result['frame_id'] >= last_processed_frame_id:
+                # 构建带标注的显示帧
+                display_frame = result['frame'].copy()
+                persons = result['persons']
+                total_count = result['total_count']
+                total_unique_count = result['total_unique_count']
+                current_frame_id = result['frame_id']
+                last_processed_frame_id = current_frame_id
 
-    # 显示统计信息
-    cv2.putText(frame, f"Total count: {total_count}", (20, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-    cv2.putText(frame, f"IN: {in_count}", (20, 70),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
-    cv2.putText(frame, f"OUT: {out_count}", (20, 110),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
-    cv2.imshow("YOLOv5n Person", frame)
-    if cv2.waitKey(1) & 0xFF == 27:
-        break
+                # 绘制检测框
+                for x1, y1, x2, y2, score in persons:
+                    cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(
+                        display_frame,
+                        f"person {score:.2f}",
+                        (x1, y1 - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 0),
+                        1
+                    )
+                
+                # 显示计数统计信息
+                cv2.putText(display_frame, f"Current Count: {total_count}", (20, 80),
+                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                cv2.putText(display_frame, f"Total Count: {total_unique_count}", (20, 110),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
-    frame_id += 1
+                # 更新缓存并显示
+                last_display_frame = display_frame.copy()
+                cv2.imshow("Pedestrian Flow Monitor (USB)", display_frame)
+                startup_phase = False
+                
+            else:
+                # 启动阶段或没有新结果时，显示当前原始帧
+                if startup_phase:
+                    cv2.imshow("Pedestrian Flow Monitor (USB)", frame)
+                else:
+                    if last_display_frame is not None:
+                        cv2.imshow("Pedestrian Flow Monitor (USB)", last_display_frame)
+                    else:
+                        cv2.imshow("Pedestrian Flow Monitor (USB)", frame)
 
-cap.release()
-cv2.destroyAllWindows()
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27:  # ESC
+                print("🛑 Exit requested by user")
+                stop_event.set()
+                break
+
+            frame_id += 1
+
+    except KeyboardInterrupt:
+        print("\n🛑 Interrupted by user")
+        stop_event.set()
+    
+    # Cleanup
+    print("\n🧹 Cleaning up resources...")
+    stop_event.set()
+    
+    # Wait for worker thread to finish
+    if worker_thread.is_alive():
+        worker_thread.join(timeout=2.0)
+    
+    # Clear queues
+    while not frame_queue.empty():
+        try:
+            frame_queue.get_nowait()
+            frame_queue.task_done()
+        except queue.Empty:
+            break
+    
+    while not result_queue.empty():
+        try:
+            result_queue.get_nowait()
+            result_queue.task_done()
+        except queue.Empty:
+            break
+    
+    cap.release()
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()

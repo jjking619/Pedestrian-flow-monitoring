@@ -12,7 +12,7 @@ import os
 import sys
 import argparse
 from tracker.bytetrack import BYTETracker
-from counter.line_counter import LineCounter
+from counter.line_count_save import LineCounter
 
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
@@ -47,7 +47,7 @@ def letterbox(
 def yolo_v5_person_infer(
     frame,
     net,
-    conf_thresh=0.25,
+    conf_thresh=0.3,
     iou_thresh=0.5,
     input_size=416
 ):
@@ -233,9 +233,6 @@ def main():
             # 绘制计数线
             if counter is not None:
                 cv2.line(frame, (0, counter.line_y), (frame.shape[1], counter.line_y), (255, 0, 0), 2)
-                # 绘制容差区域（可选）
-                # cv2.line(frame, (0, counter.line_y - counter.offset), (frame.shape[1], counter.line_y - counter.offset), (255, 100, 100), 1)
-                # cv2.line(frame, (0, counter.line_y + counter.offset), (frame.shape[1], counter.line_y + counter.offset), (255, 100, 100), 1)
 
             # Display statistics
             cv2.putText(frame, f"Current Count: {total_count}", (20, 30),
