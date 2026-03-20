@@ -355,7 +355,7 @@ def ious(atlbrs, btlbrs):
     iou = inter_area / np.maximum(union_area, 1e-6)
     return iou
 
-# @njit(parallel=True, fastmath=True,nogil=True,nopython=True)
+@njit(parallel=True, fastmath=True, nogil=True, nopython=True)
 def compute_iou_matrix(atlbrs, btlbrs):
     """
     计算两组边界框（tlbr格式）的 IOU 矩阵。
@@ -419,7 +419,7 @@ def iou_distance(atracks, btracks):
 
     return compute_iou_matrix(atlbrs.astype(np.float32), btlbrs.astype(np.float32))
 
-# @njit(parallel=True, fastmath=True,nogil=True,nopython=True)
+@njit(parallel=True, fastmath=True, nogil=True, nopython=True)
 def fuse_score_matrix(cost_matrix, scores):
     """
     cost_matrix: (M, N) IOU 距离矩阵
