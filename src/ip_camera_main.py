@@ -286,7 +286,7 @@ def ai_processing_worker(net, actual_fps):
                 counter = LineCounter()
 
             # Update counter
-            counter.update(tracks)
+            counter.update(tracks,persons)
             total_unique_count, total_count = counter.get_counts()
 
             # Put results in result queue (overwrite old results if queue is full)
@@ -322,20 +322,20 @@ def ai_processing_worker(net, actual_fps):
 
 def main():
     # Step 1: Skip discovery - Directly specify the camera info
-    print("\n📡 Connecting to camera directly...")
+    print("\nConnecting to camera directly...")
     devices = discover_onvif_devices(timeout=5)
     
     if not devices:
-        print("❌ No ONVIF devices found. Please check your network connection.")
+        print("No ONVIF devices found. Please check your network connection.")
         sys.exit(1)
     
-    print(f"✅ Found {len(devices)} ONVIF device(s):")
+    print(f"Found {len(devices)} ONVIF device(s):")
     for i, url in enumerate(devices, 1):
         print(f"  [{i}] {url}")
     
     # Step 2: Connect to the first device and get profiles
     dev_url = devices[0]
-    print(f"\n📡 Connecting to device: {dev_url}")
+    print(f"\nConnecting to device: {dev_url}")
     parsed = urlparse(dev_url)
     host = parsed.hostname
     port = parsed.port or 80
@@ -343,7 +343,7 @@ def main():
     # Step 2: Connect to the device and get profiles (using manual info)
     profiles = get_all_profiles(host, port, ONVIF_USER, ONVIF_PASS)
     if not profiles:
-        print("❌ Cannot get Profile info from the device.")
+        print("Cannot get Profile info from the device.")
         sys.exit(1)
     
     print(f"  Got {len(profiles)} Profiles:")
@@ -354,18 +354,16 @@ def main():
     # Step 3: Select main/sub streams
     main, sub = select_main_sub(profiles)
     if not main:
-        print("❌ No valid main stream found.")
+        print("No valid main stream found.")
         sys.exit(1)
     
-    print(f"  ✅ Main stream: {main['name']} ({main['width']}x{main['height']})")
     if sub:
-        print(f"  ✅ Sub-stream: {sub['name']} ({sub['width']}x{sub['height']})")
         selected_stream = sub  
     else:
-        print("  ⚠️ Only one stream available, using main stream")
+        print("   Only one stream available, using main stream")
         selected_stream = main
     rtsp_url = selected_stream['rtsp_url']
-    print(f"  📺 Using RTSP URL: {rtsp_url}")
+    print(f"   Using RTSP URL: {rtsp_url}")
     
     # Step 4: Load YOLOv5 model
     try:
@@ -374,20 +372,20 @@ def main():
         # - "yolov5n_640.onnx": Higher precision, but slower speed
         model_path = "yolov5n_416.onnx"
         if not os.path.exists(model_path):
-            print(f"❌ Model file not found: {model_path}")
+            print(f"Model file not found: {model_path}")
             sys.exit(1)
             
         net = cv2.dnn.readNetFromONNX(model_path)
-        print(f"✅ YOLOv5 model loaded successfully from {model_path}")
+        print(f"YOLOv5 model loaded successfully from {model_path}")
     except Exception as e:
-        print(f"❌ Failed to load YOLOv5 model: {e}")
+        print(f"Failed to load YOLOv5 model: {e}")
         sys.exit(1)
     
     # Step 5: Setup video capture
-    print("\n🎥 Setting up RTSP stream...")
+    print("\nSetting up RTSP stream...")
     cap = setup_rtsp_stream(rtsp_url)
     if not cap.isOpened():
-        print("❌ Failed to open RTSP stream")
+        print("Failed to open RTSP stream")
         sys.exit(1)
     
     # Get actual frame dimensions
@@ -399,13 +397,13 @@ def main():
     print(f"  Frame rate: {actual_fps:.2f} fps")
     
     # Step 6: Start AI processing worker thread
-    print("\n🧵 Starting AI processing worker thread...")
+    print("\nStarting AI processing worker thread...")
     worker_thread = threading.Thread(target=ai_processing_worker, args=(net, actual_fps))
     worker_thread.daemon = True
     worker_thread.start()
 
     # Step 7: Start main processing loop (frame capture)
-    print("\n🚀 Starting People Counting Device...")
+    print("\nStarting People Counting Device...")
     print("Press 'ESC' to exit")
 
     # Set window properties
@@ -421,7 +419,7 @@ def main():
         while not stop_event.is_set():
             ret, frame = cap.read()
             if not ret:
-                print("⚠️ Failed to read frame from RTSP stream")
+                print(" Failed to read frame from RTSP stream")
                 break
 
             # Ensure the queue always has the latest frame
@@ -497,18 +495,18 @@ def main():
 
             key = cv2.waitKey(1) & 0xFF
             if key == 27:  # ESC
-                print("🛑 Exit requested by user")
+                print("Exit requested by user")
                 stop_event.set()
                 break
 
             frame_id += 1
 
     except KeyboardInterrupt:
-        print("\n🛑 Interrupted by user")
+        print("\nInterrupted by user")
         stop_event.set()
     
     # Cleanup
-    print("\n🧹 Cleaning up resources...")
+    print("\nCleaning up resources...")
     stop_event.set()
     
     # Wait for worker thread to finish

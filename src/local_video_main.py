@@ -128,12 +128,12 @@ def yolo_v5_person_infer(
 def setup_video_capture(video_path):
     """Setup video capture from local video file"""
     if not os.path.exists(video_path):
-        print(f"❌ Video file not found: {video_path}")
+        print(f"Video file not found: {video_path}")
         sys.exit(1)
         
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"❌ Failed to open video file: {video_path}")
+        print(f"Failed to open video file: {video_path}")
         sys.exit(1)
     
     return cap
@@ -184,7 +184,7 @@ def ai_processing_worker(net, actual_fps):
                 counter = LineCounter()
 
             # Update counter
-            counter.update(tracks)
+            counter.update(tracks,persons)
             total_unique_count, total_count = counter.get_counts()
 
             # Put results in result queue (overwrite old results if queue is full)
@@ -227,7 +227,7 @@ def main():
     args = parser.parse_args()
 
     # Step 1: Setup video capture from local file
-    print(f"\n🎥 Loading local video file: {args.video}")
+    print(f"\nLoading local video file: {args.video}")
     cap = setup_video_capture(args.video)
     
     # Get actual frame dimensions
@@ -241,23 +241,23 @@ def main():
     # Step 2: Load YOLOv5 model
     try:
         if not os.path.exists(args.model):
-            print(f"❌ Model file not found: {args.model}")
+            print(f"Model file not found: {args.model}")
             sys.exit(1)
             
         net = cv2.dnn.readNetFromONNX(args.model)
-        print(f"✅ YOLOv5 model loaded successfully from {args.model}")
+        print(f"YOLOv5 model loaded successfully from {args.model}")
     except Exception as e:
-        print(f"❌ Failed to load YOLOv5 model: {e}")
+        print(f"Failed to load YOLOv5 model: {e}")
         sys.exit(1)
     
     # Step 3: Start AI processing worker thread
-    print("\n🧵 Starting AI processing worker thread...")
+    print("\nStarting AI processing worker thread...")
     worker_thread = threading.Thread(target=ai_processing_worker, args=(net, actual_fps))
     worker_thread.daemon = True
     worker_thread.start()
 
     # Step 4: Start main processing loop (frame capture)
-    print("\n🚀 Starting People Counting Device with Local Video...")
+    print("\nStarting People Counting Device with Local Video...")
     print("Press 'ESC' to exit")
 
     # Set window properties
@@ -273,7 +273,7 @@ def main():
         while not stop_event.is_set():
             ret, frame = cap.read()
             if not ret:
-                print("📹 End of video file reached")
+                print("End of video file reached")
                 break
 
             # Ensure the queue always has the latest frame
@@ -349,18 +349,18 @@ def main():
 
             key = cv2.waitKey(1) & 0xFF
             if key == 27:  # ESC
-                print("🛑 Exit requested by user")
+                print("Exit requested by user")
                 stop_event.set()
                 break
 
             frame_id += 1
 
     except KeyboardInterrupt:
-        print("\n🛑 Interrupted by user")
+        print("\nInterrupted by user")
         stop_event.set()
     
     # Cleanup
-    print("\n🧹 Cleaning up resources...")
+    print("\nCleaning up resources...")
     stop_event.set()
     
     # Wait for worker thread to finish

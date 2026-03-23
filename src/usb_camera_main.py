@@ -21,7 +21,7 @@ stop_event = threading.Event()
 
 def find_available_camera():
     """Automatically detect available camera"""
-    print("🔍 Searching for available camera devices...")
+    print("Searching for available camera devices...")
     # First try the default cameras (0-9)
     for i in range(10):
         temp_cap = None
@@ -31,17 +31,17 @@ def find_available_camera():
                 ret, frame = temp_cap.read()
                 if ret:
                     temp_cap.release()
-                    print(f"✅ Found available camera at device ID: {i}")
+                    print(f"Found available camera at device ID: {i}")
                     return i
         except Exception as e:
-            print(f"❌ Error checking camera {i}: {e}")
+            print(f"Error checking camera {i}: {e}")
         finally:
             if temp_cap is not None:
                 try:
                     temp_cap.release()
                 except Exception as e:
-                    print(f"❌ Error releasing camera {i}: {e}")
-    print("❌ No available camera device found")
+                    print(f"Error releasing camera {i}: {e}")
+    print("No available camera device found")
     return None
 
 def setup_usb_camera(camera_index):
@@ -210,7 +210,7 @@ def ai_processing_worker(net, actual_fps):
                 counter = LineCounter()
 
             # Update counter
-            counter.update(tracks)
+            counter.update(tracks,persons)
             total_unique_count, total_count = counter.get_counts()
 
             # Put results in result queue (overwrite old results if queue is full)
@@ -246,18 +246,18 @@ def ai_processing_worker(net, actual_fps):
 
 def main():
     # Step 1: Find available USB camera
-    print("\n📷 Finding USB camera...")
+    print("\nFinding USB camera...")
     CAMERA_INDEX = find_available_camera()
     if CAMERA_INDEX is None:
-        print("❌ No USB camera found. Exiting...")
+        print("No USB camera found. Exiting...")
         sys.exit(1)
     
     # Step 2: Setup video capture
-    print(f"\n🎥 Setting up USB camera (device {CAMERA_INDEX})...")
+    print(f"\nSetting up USB camera (device {CAMERA_INDEX})...")
     cap = setup_usb_camera(CAMERA_INDEX)
     
     if not cap.isOpened():
-        print("❌ Failed to open USB camera")
+        print("Failed to open USB camera")
         sys.exit(1)
     
     # Get actual frame dimensions
@@ -269,30 +269,30 @@ def main():
     print(f"  Frame rate: {actual_fps:.2f} fps")
     
     # Step 3: Load YOLOv5 model
-    print("\n🧠 Loading YOLOv5 model...")
+    print("\nLoading YOLOv5 model...")
     try:
         # - "yolov5n_320.onnx": Smaller and faster, slightly lower precision
         # - "yolov5n_416.onnx": Balances speed and precision (default)
         # - "yolov5n_640.onnx": Higher precision, but slower speed
         model_path  = "yolov5n_416.onnx"
         if not os.path.exists(model_path):
-            print(f"❌ Model file not found: {model_path}")
+            print(f"Model file not found: {model_path}")
             sys.exit(1)
         
         net = cv2.dnn.readNetFromONNX(model_path)
-        print(f"✅ YOLOv5 model loaded successfully from {model_path}")
+        print(f"YOLOv5 model loaded successfully from {model_path}")
     except Exception as e:
-        print(f"❌ Failed to load YOLOv5 model: {e}")
+        print(f"Failed to load YOLOv5 model: {e}")
         sys.exit(1)
     
     # Step 4: Start AI processing worker thread
-    print("\n🧵 Starting AI processing worker thread...")
+    print("\nStarting AI processing worker thread...")
     worker_thread = threading.Thread(target=ai_processing_worker, args=(net, actual_fps))
     worker_thread.daemon = True
     worker_thread.start()
 
     # Step 5: Start main processing loop (frame capture)
-    print("\n🚀 Starting pedestrian flow monitoring with USB camera...")
+    print("\nStarting pedestrian flow monitoring with USB camera...")
     print("Press 'ESC' to exit")
 
     # Set window properties
@@ -308,7 +308,7 @@ def main():
         while not stop_event.is_set():
             ret, frame = cap.read()
             if not ret:
-                print("⚠️ Failed to read frame from USB camera")
+                print("Failed to read frame from USB camera")
                 break
 
             # Ensure the queue always has the latest frame
@@ -387,18 +387,18 @@ def main():
 
             key = cv2.waitKey(1) & 0xFF
             if key == 27:  # ESC
-                print("🛑 Exit requested by user")
+                print("Exit requested by user")
                 stop_event.set()
                 break
 
             frame_id += 1
 
     except KeyboardInterrupt:
-        print("\n🛑 Interrupted by user")
+        print("\nInterrupted by user")
         stop_event.set()
     
     # Cleanup
-    print("\n🧹 Cleaning up resources...")
+    print("\nCleaning up resources...")
     stop_event.set()
     
     # Wait for worker thread to finish

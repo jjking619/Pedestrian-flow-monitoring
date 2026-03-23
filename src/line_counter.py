@@ -11,12 +11,12 @@ class LineCounter:
         self.total_unique_count = 0
         self.seen_track_ids = set()  # Record all seen track_ids
 
-    def update(self, tracks):
+    def update(self, tracks,persons):
         """
         tracks: [[x1,y1,x2,y2,id], ...]
         Update counting logic, keeping only real-time and cumulative counts
         """
-        current_count = len(tracks)
+        current_count = len(persons)
         
         self.total_count = current_count
         
