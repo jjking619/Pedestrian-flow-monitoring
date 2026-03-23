@@ -1,12 +1,22 @@
 import cv2
 import numpy as np
+import os
 
 class ReIDExtractor:
     """
     OSNet-based person re-identification feature extractor
     Extracts appearance feature vectors for detected persons using ONNX model
     """
-    def __init__(self, model_path="models/osnet_x0_25_market1501.onnx"):
+    def __init__(self, model_path=None):
+        if model_path is None:
+            # Use relative path to current script location (model is in the same directory)
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            model_path = os.path.join(script_dir, "osnet_x0_25_market1501.onnx")
+        
+        # Check if model file exists
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"ReID model file not found: {model_path}")
+            
         self.net = cv2.dnn.readNetFromONNX(model_path)
         self.input_size = (256, 128)  # OSNet standard input size
         self.mean = np.array([0.485, 0.456, 0.406])

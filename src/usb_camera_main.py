@@ -6,123 +6,54 @@ import sys
 import threading
 import queue
 import traceback
-from urllib.parse import urlparse
-from tracker.bytetrack import BYTETracker  
-from counter.line_counter import LineCounter
-
-from wsdiscovery import WSDiscovery
-from onvif import ONVIFCamera
+from bytetrack import BYTETracker  
+from line_counter import LineCounter
 
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 
 # Global variables for thread communication
-frame_queue = queue.Queue(maxsize=2)  # Queue to store frames for processing
-result_queue = queue.Queue(maxsize=1)  # Store latest processing result
+frame_queue = queue.Queue(maxsize=2)
+result_queue = queue.Queue(maxsize=1)
 stop_event = threading.Event()
 
-def discover_onvif_devices(timeout=3):
-    """WS-Discovery search for ONVIF devices in local network"""
-    wsd = WSDiscovery()
-    wsd.start()
-    services = wsd.searchServices(timeout=timeout)
-    devices = []
-    for svc in services:
-        for addr in svc.getXAddrs():
-            if 'onvif' in addr.lower():
-                devices.append(addr)
-                break
-    wsd.stop()
-    return devices
+def find_available_camera():
+    """Automatically detect available camera"""
+    print("🔍 Searching for available camera devices...")
+    # First try the default cameras (0-9)
+    for i in range(10):
+        temp_cap = None
+        try:
+            temp_cap = cv2.VideoCapture(i)
+            if temp_cap.isOpened():
+                ret, frame = temp_cap.read()
+                if ret:
+                    temp_cap.release()
+                    print(f"✅ Found available camera at device ID: {i}")
+                    return i
+        except Exception as e:
+            print(f"❌ Error checking camera {i}: {e}")
+        finally:
+            if temp_cap is not None:
+                try:
+                    temp_cap.release()
+                except Exception as e:
+                    print(f"❌ Error releasing camera {i}: {e}")
+    print("❌ No available camera device found")
+    return None
 
-def get_profile_info(cam, profile):
-    """Extract resolution, RTSP address and other info from a single Profile"""
-    token = profile.token
-    name = getattr(profile, 'Name', token)
+def setup_usb_camera(camera_index):
+    """Setup USB camera with optimal settings"""
+    cap = cv2.VideoCapture(camera_index)
     
-    # Get resolution
-    width = height = None
-    if hasattr(profile, 'VideoEncoderConfiguration') and profile.VideoEncoderConfiguration:
-        resolution = profile.VideoEncoderConfiguration.Resolution
-        width = resolution.Width
-        height = resolution.Height
+    # Set buffer size to minimize latency
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     
-    # Get RTSP stream address
-    media = cam.create_media_service()
-    try:
-        stream_uri = media.GetStreamUri({
-            'StreamSetup': {
-                'Stream': 'RTP-Unicast',
-                'Transport': {'Protocol': 'RTSP'}
-            },
-            'ProfileToken': token
-        })
-        rtsp_url = stream_uri.Uri
-    except Exception as e:
-        print(f"    Failed to get Profile {token} stream address: {e}")
-        return None
+    # Try to set reasonable resolution (lower resolution for better performance on Pi)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     
-    return {
-        'token': token,
-        'name': name,
-        'width': width,
-        'height': height,
-        'rtsp_url': rtsp_url
-    }
-
-def get_all_profiles(host, port, user, passwd):
-    """Connect to device and get all available Profiles with detailed info"""
-    try:
-        cam = ONVIFCamera(host, port, user, passwd)
-        
-        media = cam.create_media_service()
-        profiles = media.GetProfiles()
-        if not profiles:
-            print("  Device has no available Profiles")
-            return None
-        
-        profile_list = []
-        for p in profiles:
-            info = get_profile_info(cam, p)
-            if info:
-                # Complete authentication info (if not included in URL)
-                if user and passwd and '@' not in info['rtsp_url']:
-                    parsed = urlparse(info['rtsp_url'])
-                    auth_url = f"{parsed.scheme}://{user}:{passwd}@{parsed.netloc}{parsed.path}"
-                    if parsed.query:
-                        auth_url += f"?{parsed.query}"
-                    if parsed.fragment:
-                        auth_url += f"#{parsed.fragment}"
-                    info['rtsp_url'] = auth_url
-                profile_list.append(info)
-        
-        return profile_list
-    except Exception as e:
-        print(f"  Failed to connect to device: {e}")
-        return None
-
-def select_main_sub(profiles):
-    """
-    Distinguish main stream and sub-stream from profiles list.
-    Returns (main, sub):
-      - main: Profile with highest resolution
-      - sub:  Profile with second highest resolution (None if not available)
-    """
-    if not profiles:
-        return None, None
-    
-    # Filter out Profiles without resolution (usually present)
-    valid = [p for p in profiles if p['width'] and p['height']]
-    if not valid:
-        # If no resolution info, take first two by list order
-        valid = profiles
-    
-    # Sort by resolution descending (width*height)
-    sorted_profiles = sorted(valid, key=lambda p: (p['width'] or 0) * (p['height'] or 0), reverse=True)
-    
-    main = sorted_profiles[0] if sorted_profiles else None
-    sub = sorted_profiles[1] if len(sorted_profiles) > 1 else None
-    return main, sub
+    return cap
 
 def letterbox(
     img,
@@ -228,31 +159,25 @@ def yolo_v5_person_infer(
 
     return results
 
-def setup_rtsp_stream(rtsp_url):
-    """Setup RTSP stream with TCP transport for better reliability"""
-    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|analyzeduration;1000000|probesize;32"
-    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    return cap
-
 def ai_processing_worker(net, actual_fps):
     """Worker thread for AI processing and tracking"""
-    # Use ByteTrack for object tracking
+    # Use ByteTrack (consistent with IP camera version)
     tracker = BYTETracker(
         track_thresh=0.5,      # Detection threshold for tracking
         high_thresh=0.5,       # High confidence threshold
-        low_thresh=0.1,        # Low confidence threshold 
+        low_thresh=0.1,        # Low confidence threshold (key feature of ByteTrack: utilizing low-scoring detections)
         match_thresh=0.7,      # Matching threshold
         track_buffer=30,       # Tracking buffer size
         frame_rate=actual_fps, # Frame rate
         use_reid=True,         # Enable ReID features
     )
     
+    # Initialize counter
     counter = None
     
     while not stop_event.is_set():
         try:
-            # Get latest frame 
+            # Get latest frame - clear old frames from queue, only process the newest one
             frame_data = None
             while not frame_queue.empty():
                 try:
@@ -262,6 +187,7 @@ def ai_processing_worker(net, actual_fps):
                     break
             
             if frame_data is None:
+                # If queue is empty, wait for new frame
                 frame_data = frame_queue.get(timeout=1.0)
                 frame_queue.task_done()
                 
@@ -278,6 +204,7 @@ def ai_processing_worker(net, actual_fps):
             
             # Initialize counter on first frame processing
             if counter is None:
+                line_y = frame.shape[0] // 2  # Use center of frame as counting line
                 counter = LineCounter()
 
             # Update counter
@@ -316,91 +243,71 @@ def ai_processing_worker(net, actual_fps):
             traceback.print_exc()
 
 def main():
-    # Step 1: Skip discovery - Directly specify the camera info
-    print("\n📡 Connecting to camera directly...")
-    
-    # 🔧 Manually specify camera details (replace with your actual values)
-    HOST = "192.168.177.227"  # Your camera's IP address
-    PORT = 80                 # HTTP port, usually 80 or 8080
-    ONVIF_USER = ""           # Username (if required)
-    ONVIF_PASS = ""           # Password (if required)
-    
-    # Step 2: Connect to the device and get profiles (using manual info)
-    profiles = get_all_profiles(HOST, PORT, ONVIF_USER, ONVIF_PASS)
-    if not profiles:
-        print("❌ Cannot get Profile info from the device.")
+    # Step 1: Find available USB camera
+    print("\n📷 Finding USB camera...")
+    CAMERA_INDEX = find_available_camera()
+    if CAMERA_INDEX is None:
+        print("❌ No USB camera found. Exiting...")
         sys.exit(1)
     
-    print(f"  Got {len(profiles)} Profiles:")
-    for p in profiles:
-        res = f"{p['width']}x{p['height']}" if p['width'] and p['height'] else "Unknown resolution"
-        print(f"    - {p['name']} ({p['token']}): {res}")
-    
-    # Step 3: Select main/sub streams
-    main, sub = select_main_sub(profiles)
-    if not main:
-        print("❌ No valid main stream found.")
-        sys.exit(1)
-    
-    print(f"  ✅ Main stream: {main['name']} ({main['width']}x{main['height']})")
-    if sub:
-        print(f"  ✅ Sub-stream: {sub['name']} ({sub['width']}x{sub['height']})")
-        selected_stream = sub  
-    else:
-        print("  ⚠️ Only one stream available, using main stream")
-        selected_stream = main
-    rtsp_url = selected_stream['rtsp_url']
-    print(f"  📺 Using RTSP URL: {rtsp_url}")
-    
-    # Step 4: Load YOLOv5 model
-    try:
-        net = cv2.dnn.readNetFromONNX("models/yolov5n_416.onnx")
-        print("✅ YOLOv5 model loaded successfully")
-    except Exception as e:
-        print(f"❌ Failed to load YOLOv5 model: {e}")
-        print("Please ensure the model file exists at 'models/yolov5n_640.onnx'")
-        sys.exit(1)
-    
-    # Step 5: Setup video capture
-    print("\n🎥 Setting up RTSP stream...")
-    cap = setup_rtsp_stream(rtsp_url)
+    # Step 2: Setup video capture
+    print(f"\n🎥 Setting up USB camera (device {CAMERA_INDEX})...")
+    cap = setup_usb_camera(CAMERA_INDEX)
     
     if not cap.isOpened():
-        print("❌ Failed to open RTSP stream")
+        print("❌ Failed to open USB camera")
         sys.exit(1)
     
     # Get actual frame dimensions
     actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    actual_fps = cap.get(cv2.CAP_PROP_FPS)
+    actual_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0  # Default to 30 if not available
     
     print(f"  Frame dimensions: {actual_width}x{actual_height}")
     print(f"  Frame rate: {actual_fps:.2f} fps")
     
-    # Step 6: Start AI processing worker thread
+    # Step 3: Load YOLOv5 model
+    print("\n🧠 Loading YOLOv5 model...")
+    try:
+        # - "yolov5n_320.onnx": Smaller and faster, slightly lower precision
+        # - "yolov5n_416.onnx": Balances speed and precision (default)
+        # - "yolov5n_640.onnx": Higher precision, but slower speed
+        model_filename = "yolov5n_416.onnx"
+        model_path = os.path.join(script_dir, model_filename)
+        if not os.path.exists(model_path):
+            print(f"❌ Model file not found: {model_path}")
+            sys.exit(1)
+        
+        net = cv2.dnn.readNetFromONNX(model_path)
+        print(f"✅ YOLOv5 model loaded successfully from {model_path}")
+    except Exception as e:
+        print(f"❌ Failed to load YOLOv5 model: {e}")
+        sys.exit(1)
+    
+    # Step 4: Start AI processing worker thread
     print("\n🧵 Starting AI processing worker thread...")
     worker_thread = threading.Thread(target=ai_processing_worker, args=(net, actual_fps))
     worker_thread.daemon = True
     worker_thread.start()
 
-    # Step 7: Start main processing loop (frame capture)
-    print("\n🚀 Starting People Counting Device...")
+    # Step 5: Start main processing loop (frame capture)
+    print("\n🚀 Starting pedestrian flow monitoring with USB camera...")
     print("Press 'ESC' to exit")
 
     # Set window properties
-    cv2.namedWindow("People Counting Device", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("People Counting Device", FRAME_WIDTH, FRAME_HEIGHT)
+    cv2.namedWindow("Pedestrian Flow Monitor (USB)", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("Pedestrian Flow Monitor (USB)", FRAME_WIDTH, FRAME_HEIGHT)
 
     frame_id = 0
     last_processed_frame_id = -1
-    last_display_frame = None  # Cache the last displayed annotated frame
-    startup_phase = True  # Startup phase flag
+    last_display_frame = None
+    startup_phase = True
 
     try:
         while not stop_event.is_set():
             ret, frame = cap.read()
             if not ret:
-                print("⚠️ Failed to read frame from RTSP stream")
+                print("⚠️ Failed to read frame from USB camera")
                 break
 
             # Ensure the queue always has the latest frame
@@ -417,6 +324,7 @@ def main():
                 except queue.Full:
                     pass
 
+            # Get latest processing result
             result = None
             try:
                 # Clear old results, keep only the latest
@@ -432,13 +340,14 @@ def main():
             except queue.Empty:
                 pass
 
+            # Display logic optimization
             if result is not None and result['frame_id'] >= last_processed_frame_id:
+                # Build annotated display frame
                 display_frame = result['frame'].copy()
                 persons = result['persons']
                 total_count = result['total_count']
                 total_unique_count = result['total_unique_count']
                 current_frame_id = result['frame_id']
-                # Update last processed frame ID
                 last_processed_frame_id = current_frame_id
 
                 # Draw detection boxes
@@ -459,20 +368,21 @@ def main():
                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                 cv2.putText(display_frame, f"Total Count: {total_unique_count}", (20, 110),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+
+                # Update cache and display
                 last_display_frame = display_frame.copy()
-                cv2.imshow("People Counting Device", display_frame)
-                startup_phase = False  # End of startup phase
+                cv2.imshow("Pedestrian Flow Monitor (USB)", display_frame)
+                startup_phase = False
                 
             else:
-                # During startup phase or when no new results, show current raw frame (avoid showing old processed results)
+                # During startup phase or when no new results, show current raw frame
                 if startup_phase:
-                    # During startup phase, show raw frame to avoid displaying initialization old frames
-                    cv2.imshow("People Counting Device", frame)
+                    cv2.imshow("Pedestrian Flow Monitor (USB)", frame)
                 else:
                     if last_display_frame is not None:
-                        cv2.imshow("People Counting Device", last_display_frame)
+                        cv2.imshow("Pedestrian Flow Monitor (USB)", last_display_frame)
                     else:
-                        cv2.imshow("People Counting Device", frame)
+                        cv2.imshow("Pedestrian Flow Monitor (USB)", frame)
 
             key = cv2.waitKey(1) & 0xFF
             if key == 27:  # ESC
