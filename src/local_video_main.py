@@ -6,13 +6,10 @@ import sys
 import threading
 import queue
 import traceback
+import argparse
 
-from urllib.parse import urlparse
 from bytetrack import BYTETracker  
 from line_counter import LineCounter
-
-from wsdiscovery import WSDiscovery
-from onvif import ONVIFCamera
 
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
@@ -21,109 +18,6 @@ FRAME_HEIGHT = 720
 frame_queue = queue.Queue(maxsize=2)  # Queue to store frames for processing
 result_queue = queue.Queue(maxsize=1)  # Store latest processing result
 stop_event = threading.Event()
-
-def discover_onvif_devices(timeout=3):
-    """WS-Discovery search for ONVIF devices in local network"""
-    wsd = WSDiscovery()
-    wsd.start()
-    services = wsd.searchServices(timeout=timeout)
-    devices = []
-    for svc in services:
-        for addr in svc.getXAddrs():
-            if 'onvif' in addr.lower():
-                devices.append(addr)
-                break
-    wsd.stop()
-    return devices
-
-def get_profile_info(cam, profile):
-    """Extract resolution, RTSP address and other info from a single Profile"""
-    token = profile.token
-    name = getattr(profile, 'Name', token)
-    
-    # Get resolution
-    width = height = None
-    if hasattr(profile, 'VideoEncoderConfiguration') and profile.VideoEncoderConfiguration:
-        resolution = profile.VideoEncoderConfiguration.Resolution
-        width = resolution.Width
-        height = resolution.Height
-    
-    # Get RTSP stream address
-    media = cam.create_media_service()
-    try:
-        stream_uri = media.GetStreamUri({
-            'StreamSetup': {
-                'Stream': 'RTP-Unicast',
-                'Transport': {'Protocol': 'RTSP'}
-            },
-            'ProfileToken': token
-        })
-        rtsp_url = stream_uri.Uri
-    except Exception as e:
-        print(f"    Failed to get Profile {token} stream address: {e}")
-        return None
-    
-    return {
-        'token': token,
-        'name': name,
-        'width': width,
-        'height': height,
-        'rtsp_url': rtsp_url
-    }
-
-def get_all_profiles(host, port, user, passwd):
-    """Connect to device and get all available Profiles with detailed info"""
-    try:
-        cam = ONVIFCamera(host, port, user, passwd)
-        
-        media = cam.create_media_service()
-        profiles = media.GetProfiles()
-        if not profiles:
-            print("  Device has no available Profiles")
-            return None
-        
-        profile_list = []
-        for p in profiles:
-            info = get_profile_info(cam, p)
-            if info:
-                # Complete authentication info (if not included in URL)
-                if user and passwd and '@' not in info['rtsp_url']:
-                    parsed = urlparse(info['rtsp_url'])
-                    auth_url = f"{parsed.scheme}://{user}:{passwd}@{parsed.netloc}{parsed.path}"
-                    if parsed.query:
-                        auth_url += f"?{parsed.query}"
-                    if parsed.fragment:
-                        auth_url += f"#{parsed.fragment}"
-                    info['rtsp_url'] = auth_url
-                profile_list.append(info)
-        
-        return profile_list
-    except Exception as e:
-        print(f"  Failed to connect to device: {e}")
-        return None
-
-def select_main_sub(profiles):
-    """
-    Distinguish main stream and sub-stream from profiles list.
-    Returns (main, sub):
-      - main: Profile with highest resolution
-      - sub:  Profile with second highest resolution (None if not available)
-    """
-    if not profiles:
-        return None, None
-    
-    # Filter out Profiles without resolution (usually present)
-    valid = [p for p in profiles if p['width'] and p['height']]
-    if not valid:
-        # If no resolution info, take first two by list order
-        valid = profiles
-    
-    # Sort by resolution descending (width*height)
-    sorted_profiles = sorted(valid, key=lambda p: (p['width'] or 0) * (p['height'] or 0), reverse=True)
-    
-    main = sorted_profiles[0] if sorted_profiles else None
-    sub = sorted_profiles[1] if len(sorted_profiles) > 1 else None
-    return main, sub
 
 def letterbox(
     img,
@@ -229,11 +123,17 @@ def yolo_v5_person_infer(
 
     return results
 
-def setup_rtsp_stream(rtsp_url):
-    """Setup RTSP stream with TCP transport for better reliability"""
-    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|analyzeduration;1000000|probesize;32"
-    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+def setup_video_capture(video_path):
+    """Setup video capture from local video file"""
+    if not os.path.exists(video_path):
+        print(f"❌ Video file not found: {video_path}")
+        sys.exit(1)
+        
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"❌ Failed to open video file: {video_path}")
+        sys.exit(1)
+    
     return cap
 
 def ai_processing_worker(net, actual_fps):
@@ -317,81 +217,16 @@ def ai_processing_worker(net, actual_fps):
             traceback.print_exc()
 
 def main():
-    # Step 1: Skip discovery - Directly specify the camera info
-    print("\n📡 Connecting to camera directly...")
-    
-    # 🔧 Manually specify camera details (replace with your actual values)
-    # HOST = "192.168.177.227"  # Your camera's IP address
-    # PORT = 80                 # HTTP port, usually 80 or 8080
-    # ONVIF_USER = ""           # Username (if required)
-    # ONVIF_PASS = ""           # Password (if required)
-    devices = discover_onvif_devices(timeout=5)
-    
-    if not devices:
-        print("❌ No ONVIF devices found. Please check your network connection.")
-        sys.exit(1)
-    
-    print(f"✅ Found {len(devices)} ONVIF device(s):")
-    for i, url in enumerate(devices, 1):
-        print(f"  [{i}] {url}")
-    
-    # Step 2: Connect to the first device and get profiles
-    dev_url = devices[0]
-    print(f"\n📡 Connecting to device: {dev_url}")
-    parsed = urlparse(dev_url)
-    host = parsed.hostname
-    port = parsed.port or 80
-    
-    # Step 2: Connect to the device and get profiles (using manual info)
-    profiles = get_all_profiles(HOST, PORT, ONVIF_USER, ONVIF_PASS)
-    if not profiles:
-        print("❌ Cannot get Profile info from the device.")
-        sys.exit(1)
-    
-    print(f"  Got {len(profiles)} Profiles:")
-    for p in profiles:
-        res = f"{p['width']}x{p['height']}" if p['width'] and p['height'] else "Unknown resolution"
-        print(f"    - {p['name']} ({p['token']}): {res}")
-    
-    # Step 3: Select main/sub streams
-    main, sub = select_main_sub(profiles)
-    if not main:
-        print("❌ No valid main stream found.")
-        sys.exit(1)
-    
-    print(f"  ✅ Main stream: {main['name']} ({main['width']}x{main['height']})")
-    if sub:
-        print(f"  ✅ Sub-stream: {sub['name']} ({sub['width']}x{sub['height']})")
-        selected_stream = sub  
-    else:
-        print("  ⚠️ Only one stream available, using main stream")
-        selected_stream = main
-    rtsp_url = selected_stream['rtsp_url']
-    print(f"  📺 Using RTSP URL: {rtsp_url}")
-    
-    # Step 4: Load YOLOv5 model
-    try:
-        # - "yolov5n_320.onnx": Smaller and faster, slightly lower precision
-        # - "yolov5n_416.onnx": Balances speed and precision (default)
-        # - "yolov5n_640.onnx": Higher precision, but slower speed
-        model_path = "yolov5n_416.onnx"
-        if not os.path.exists(model_path):
-            print(f"❌ Model file not found: {model_path}")
-            sys.exit(1)
-            
-        net = cv2.dnn.readNetFromONNX(model_path)
-        print(f"✅ YOLOv5 model loaded successfully from {model_path}")
-    except Exception as e:
-        print(f"❌ Failed to load YOLOv5 model: {e}")
-        sys.exit(1)
-    
-    # Step 5: Setup video capture
-    print("\n🎥 Setting up RTSP stream...")
-    cap = setup_rtsp_stream(rtsp_url)
-    
-    if not cap.isOpened():
-        print("❌ Failed to open RTSP stream")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description='Pedestrian Flow Monitoring with Local Video File')
+    parser.add_argument('--video', type=str, default='street.mp4', 
+                       help='Path to local video file (default: street.mp4)')
+    parser.add_argument('--model', type=str, default='yolov5n_416.onnx',
+                       help='Path to YOLOv5 ONNX model (default: yolov5n_416.onnx)')
+    args = parser.parse_args()
+
+    # Step 1: Setup video capture from local file
+    print(f"\n🎥 Loading local video file: {args.video}")
+    cap = setup_video_capture(args.video)
     
     # Get actual frame dimensions
     actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -401,14 +236,26 @@ def main():
     print(f"  Frame dimensions: {actual_width}x{actual_height}")
     print(f"  Frame rate: {actual_fps:.2f} fps")
     
-    # Step 6: Start AI processing worker thread
+    # Step 2: Load YOLOv5 model
+    try:
+        if not os.path.exists(args.model):
+            print(f"❌ Model file not found: {args.model}")
+            sys.exit(1)
+            
+        net = cv2.dnn.readNetFromONNX(args.model)
+        print(f"✅ YOLOv5 model loaded successfully from {args.model}")
+    except Exception as e:
+        print(f"❌ Failed to load YOLOv5 model: {e}")
+        sys.exit(1)
+    
+    # Step 3: Start AI processing worker thread
     print("\n🧵 Starting AI processing worker thread...")
     worker_thread = threading.Thread(target=ai_processing_worker, args=(net, actual_fps))
     worker_thread.daemon = True
     worker_thread.start()
 
-    # Step 7: Start main processing loop (frame capture)
-    print("\n🚀 Starting People Counting Device...")
+    # Step 4: Start main processing loop (frame capture)
+    print("\n🚀 Starting People Counting Device with Local Video...")
     print("Press 'ESC' to exit")
 
     # Set window properties
@@ -424,7 +271,7 @@ def main():
         while not stop_event.is_set():
             ret, frame = cap.read()
             if not ret:
-                print("⚠️ Failed to read frame from RTSP stream")
+                print("📹 End of video file reached")
                 break
 
             # Ensure the queue always has the latest frame

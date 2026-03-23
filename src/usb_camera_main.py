@@ -272,8 +272,7 @@ def main():
         # - "yolov5n_320.onnx": Smaller and faster, slightly lower precision
         # - "yolov5n_416.onnx": Balances speed and precision (default)
         # - "yolov5n_640.onnx": Higher precision, but slower speed
-        model_filename = "yolov5n_416.onnx"
-        model_path = os.path.join(script_dir, model_filename)
+        model_path  = "yolov5n_416.onnx"
         if not os.path.exists(model_path):
             print(f"❌ Model file not found: {model_path}")
             sys.exit(1)
