@@ -17,10 +17,9 @@ FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 
 # Global variables for thread communication
-frame_queue = queue.Queue(maxsize=2)  # 队列，用于存储处理结果
+frame_queue = queue.Queue(maxsize=2)  # Queue to store frames for processing
 result_queue = queue.Queue(maxsize=1)  # Store latest processing result
 stop_event = threading.Event()
-processing_lock = threading.Lock()
 
 def discover_onvif_devices(timeout=3):
     """WS-Discovery search for ONVIF devices in local network"""
@@ -198,7 +197,7 @@ def yolo_v5_person_infer(
 
         cx, cy, w, h = det[:4]
 
-        # 恢复到 letterbox 前
+        # Restore coordinates to pre-letterbox dimensions
         x = (cx - w / 2 - pad_w) / scale
         y = (cy - h / 2 - pad_h) / scale
         w = w / scale
@@ -238,24 +237,22 @@ def setup_rtsp_stream(rtsp_url):
 
 def ai_processing_worker(net, actual_fps):
     """Worker thread for AI processing and tracking"""
-    # 使用 ByteTrack
+    # Use ByteTrack for object tracking
     tracker = BYTETracker(
-        track_thresh=0.5,      # 跟踪阈值
-        high_thresh=0.5,       # 高置信度阈值
-        low_thresh=0.1,        # 低置信度阈值（ByteTrack 的关键：利用低分检测框）
-        match_thresh=0.7,      # 匹配阈值
-        track_buffer=30,       # 跟踪缓冲区大小
-        frame_rate=actual_fps,          # 帧率
-        use_reid=True,         # 启用 ReID 特征
+        track_thresh=0.5,      # Detection threshold for tracking
+        high_thresh=0.5,       # High confidence threshold
+        low_thresh=0.1,        # Low confidence threshold 
+        match_thresh=0.7,      # Matching threshold
+        track_buffer=30,       # Tracking buffer size
+        frame_rate=actual_fps, # Frame rate
+        use_reid=True,         # Enable ReID features
     )
     
-    # 初始化计数器（计数线设为画面中央）
-    line_y = 0  # 将在处理第一帧时动态设置
     counter = None
     
     while not stop_event.is_set():
         try:
-            # 获取最新帧 - 清空队列中的旧帧，只处理最新的一帧
+            # Get latest frame 
             frame_data = None
             while not frame_queue.empty():
                 try:
@@ -265,7 +262,6 @@ def ai_processing_worker(net, actual_fps):
                     break
             
             if frame_data is None:
-                # 如果队列为空，等待新帧
                 frame_data = frame_queue.get(timeout=1.0)
                 frame_queue.task_done()
                 
@@ -275,19 +271,16 @@ def ai_processing_worker(net, actual_fps):
             frame, frame_id = frame_data
                 
             # Run person detection
-            persons = yolo_v5_person_infer(frame, net,)
+            persons = yolo_v5_person_infer(frame, net)
                 
-            # 直接调用tracker.update()，传入frame供内部ReID特征提取
+            # Call tracker.update() directly with frame for internal ReID feature extraction
             tracks = tracker.update(persons, frame=frame)
             
-            # 初始化计数器（第一次处理帧时）
+            # Initialize counter on first frame processing
             if counter is None:
-                line_y = frame.shape[0] // 2  # 画面中央作为计数线
-                # 动态设置容差：至少5像素，最多为高度的1%
-                offset = max(5, frame.shape[0] // 100)
                 counter = LineCounter()
 
-            # 更新计数器
+            # Update counter
             counter.update(tracks)
             total_unique_count, total_count = counter.get_counts()
 
@@ -298,7 +291,7 @@ def ai_processing_worker(net, actual_fps):
                     'persons': persons,
                     'tracks': tracks,
                     'total_count': total_count,
-                    'total_unique_count': total_unique_count,  # 使用新的字段名
+                    'total_unique_count': total_unique_count,
                     'frame_id': frame_id,
                 })
             except queue.Full:
@@ -310,7 +303,7 @@ def ai_processing_worker(net, actual_fps):
                         'persons': persons,
                         'tracks': tracks,
                         'total_count': total_count,
-                        'total_unique_count': total_unique_count,  # 使用新的字段名
+                        'total_unique_count': total_unique_count,
                         'frame_id': frame_id,
                     })
                 except queue.Empty:
@@ -391,17 +384,17 @@ def main():
     worker_thread.start()
 
     # Step 7: Start main processing loop (frame capture)
-    print("\n🚀 Starting pedestrian flow monitoring...")
+    print("\n🚀 Starting People Counting Device...")
     print("Press 'ESC' to exit")
 
     # Set window properties
-    cv2.namedWindow("Pedestrian Flow Monitor", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("Pedestrian Flow Monitor", FRAME_WIDTH, FRAME_HEIGHT)
+    cv2.namedWindow("People Counting Device", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("People Counting Device", FRAME_WIDTH, FRAME_HEIGHT)
 
     frame_id = 0
     last_processed_frame_id = -1
-    last_display_frame = None  # 缓存上一次显示的带标注帧
-    startup_phase = True  # 启动阶段标志
+    last_display_frame = None  # Cache the last displayed annotated frame
+    startup_phase = True  # Startup phase flag
 
     try:
         while not stop_event.is_set():
@@ -410,7 +403,7 @@ def main():
                 print("⚠️ Failed to read frame from RTSP stream")
                 break
 
-            # 确保队列中始终有最新帧
+            # Ensure the queue always has the latest frame
             try:
                 frame_queue.put((frame.copy(), frame_id), block=False)
             except queue.Full:
@@ -424,10 +417,9 @@ def main():
                 except queue.Full:
                     pass
 
-            # 获取最新处理结果
             result = None
             try:
-                # 清空旧的结果，只保留最新的
+                # Clear old results, keep only the latest
                 while not result_queue.empty():
                     try:
                         result = result_queue.get_nowait()
@@ -440,18 +432,16 @@ def main():
             except queue.Empty:
                 pass
 
-            # 显示逻辑优化
             if result is not None and result['frame_id'] >= last_processed_frame_id:
-                # 构建带标注的显示帧
                 display_frame = result['frame'].copy()
                 persons = result['persons']
                 total_count = result['total_count']
-                total_unique_count = result['total_unique_count']  # 使用新的字段名
+                total_unique_count = result['total_unique_count']
                 current_frame_id = result['frame_id']
-                # 更新最后处理的帧ID
+                # Update last processed frame ID
                 last_processed_frame_id = current_frame_id
 
-                # 绘制检测框
+                # Draw detection boxes
                 for x1, y1, x2, y2, score in persons:
                     cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cv2.putText(
@@ -464,28 +454,25 @@ def main():
                         1
                     )
                 
-                # 显示计数统计信息
+                # Display counting statistics
                 cv2.putText(display_frame, f"Current Count: {total_count}", (20, 80),
                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                 cv2.putText(display_frame, f"Total Count: {total_unique_count}", (20, 110),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-
-                # 更新缓存并显示
                 last_display_frame = display_frame.copy()
-                cv2.imshow("Pedestrian Flow Monitor", display_frame)
-                startup_phase = False  # 启动阶段结束
+                cv2.imshow("People Counting Device", display_frame)
+                startup_phase = False  # End of startup phase
                 
             else:
-                # 启动阶段或没有新结果时，显示当前原始帧（避免显示旧的处理结果）
+                # During startup phase or when no new results, show current raw frame (avoid showing old processed results)
                 if startup_phase:
-                    # 启动阶段显示原始帧，避免显示初始化时的旧帧
-                    cv2.imshow("Pedestrian Flow Monitor", frame)
+                    # During startup phase, show raw frame to avoid displaying initialization old frames
+                    cv2.imshow("People Counting Device", frame)
                 else:
-                    # 非启动阶段，如果有助化帧则显示，否则显示当前帧
                     if last_display_frame is not None:
-                        cv2.imshow("Pedestrian Flow Monitor", last_display_frame)
+                        cv2.imshow("People Counting Device", last_display_frame)
                     else:
-                        cv2.imshow("Pedestrian Flow Monitor", frame)
+                        cv2.imshow("People Counting Device", frame)
 
             key = cv2.waitKey(1) & 0xFF
             if key == 27:  # ESC

@@ -128,7 +128,7 @@ def yolo_v5_person_infer(
 
         cx, cy, w, h = det[:4]
 
-        # 恢复到 letterbox 前
+        # Restore coordinates to pre-letterbox dimensions
         x = (cx - w / 2 - pad_w) / scale
         y = (cy - h / 2 - pad_h) / scale
         w = w / scale
@@ -161,23 +161,23 @@ def yolo_v5_person_infer(
 
 def ai_processing_worker(net, actual_fps):
     """Worker thread for AI processing and tracking"""
-    # 使用 ByteTrack（与IP摄像头版本保持一致）
+    # Use ByteTrack (consistent with IP camera version)
     tracker = BYTETracker(
-        track_thresh=0.5,      # 跟踪阈值
-        high_thresh=0.5,       # 高置信度阈值
-        low_thresh=0.1,        # 低置信度阈值（ByteTrack 的关键：利用低分检测框）
-        match_thresh=0.7,      # 匹配阈值
-        track_buffer=30,       # 跟踪缓冲区大小
-        frame_rate=actual_fps, # 帧率
-        use_reid=True,         # 启用 ReID 特征
+        track_thresh=0.5,      # Detection threshold for tracking
+        high_thresh=0.5,       # High confidence threshold
+        low_thresh=0.1,        # Low confidence threshold (key feature of ByteTrack: utilizing low-scoring detections)
+        match_thresh=0.7,      # Matching threshold
+        track_buffer=30,       # Tracking buffer size
+        frame_rate=actual_fps, # Frame rate
+        use_reid=True,         # Enable ReID features
     )
     
-    # 初始化计数器
+    # Initialize counter
     counter = None
     
     while not stop_event.is_set():
         try:
-            # 获取最新帧 - 清空队列中的旧帧，只处理最新的一帧
+            # Get latest frame - clear old frames from queue, only process the newest one
             frame_data = None
             while not frame_queue.empty():
                 try:
@@ -187,7 +187,7 @@ def ai_processing_worker(net, actual_fps):
                     break
             
             if frame_data is None:
-                # 如果队列为空，等待新帧
+                # If queue is empty, wait for new frame
                 frame_data = frame_queue.get(timeout=1.0)
                 frame_queue.task_done()
                 
@@ -199,15 +199,15 @@ def ai_processing_worker(net, actual_fps):
             # Run person detection
             persons = yolo_v5_person_infer(frame, net)
                 
-            # 直接调用tracker.update()，传入frame供内部ReID特征提取
+            # Call tracker.update() directly with frame for internal ReID feature extraction
             tracks = tracker.update(persons, frame=frame)
             
-            # 初始化计数器（第一次处理帧时）
+            # Initialize counter on first frame processing
             if counter is None:
-                line_y = frame.shape[0] // 2  # 画面中央作为计数线
+                line_y = frame.shape[0] // 2  # Use center of frame as counting line
                 counter = LineCounter()
 
-            # 更新计数器
+            # Update counter
             counter.update(tracks)
             total_unique_count, total_count = counter.get_counts()
 
@@ -309,7 +309,7 @@ def main():
                 print("⚠️ Failed to read frame from USB camera")
                 break
 
-            # 确保队列中始终有最新帧
+            # Ensure the queue always has the latest frame
             try:
                 frame_queue.put((frame.copy(), frame_id), block=False)
             except queue.Full:
@@ -323,10 +323,10 @@ def main():
                 except queue.Full:
                     pass
 
-            # 获取最新处理结果
+            # Get latest processing result
             result = None
             try:
-                # 清空旧的结果，只保留最新的
+                # Clear old results, keep only the latest
                 while not result_queue.empty():
                     try:
                         result = result_queue.get_nowait()
@@ -339,9 +339,9 @@ def main():
             except queue.Empty:
                 pass
 
-            # 显示逻辑优化
+            # Display logic optimization
             if result is not None and result['frame_id'] >= last_processed_frame_id:
-                # 构建带标注的显示帧
+                # Build annotated display frame
                 display_frame = result['frame'].copy()
                 persons = result['persons']
                 total_count = result['total_count']
@@ -349,7 +349,7 @@ def main():
                 current_frame_id = result['frame_id']
                 last_processed_frame_id = current_frame_id
 
-                # 绘制检测框
+                # Draw detection boxes
                 for x1, y1, x2, y2, score in persons:
                     cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cv2.putText(
@@ -362,19 +362,19 @@ def main():
                         1
                     )
                 
-                # 显示计数统计信息
+                # Display counting statistics
                 cv2.putText(display_frame, f"Current Count: {total_count}", (20, 80),
                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                 cv2.putText(display_frame, f"Total Count: {total_unique_count}", (20, 110),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
-                # 更新缓存并显示
+                # Update cache and display
                 last_display_frame = display_frame.copy()
                 cv2.imshow("Pedestrian Flow Monitor (USB)", display_frame)
                 startup_phase = False
                 
             else:
-                # 启动阶段或没有新结果时，显示当前原始帧
+                # During startup phase or when no new results, show current raw frame
                 if startup_phase:
                     cv2.imshow("Pedestrian Flow Monitor (USB)", frame)
                 else:
