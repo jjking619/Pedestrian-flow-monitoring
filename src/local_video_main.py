@@ -7,6 +7,8 @@ import threading
 import queue
 import traceback
 import argparse
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='numba')
 
 from bytetrack import BYTETracker  
 from line_counter import LineCounter

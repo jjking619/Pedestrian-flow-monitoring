@@ -6,6 +6,8 @@ import sys
 import threading
 import queue
 import traceback
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='numba')
 
 from urllib.parse import urlparse
 from bytetrack import BYTETracker  
@@ -16,6 +18,8 @@ from onvif import ONVIFCamera
 
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
+ONVIF_USER =""
+ONVIF_PASS =""
 
 # Global variables for thread communication
 frame_queue = queue.Queue(maxsize=2)  # Queue to store frames for processing
@@ -231,7 +235,7 @@ def yolo_v5_person_infer(
 
 def setup_rtsp_stream(rtsp_url):
     """Setup RTSP stream with TCP transport for better reliability"""
-    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|analyzeduration;1000000|probesize;32"
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|analyzeduration;1000000|probesize;1024"
     cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap
@@ -319,12 +323,6 @@ def ai_processing_worker(net, actual_fps):
 def main():
     # Step 1: Skip discovery - Directly specify the camera info
     print("\n📡 Connecting to camera directly...")
-    
-    # 🔧 Manually specify camera details (replace with your actual values)
-    # HOST = "192.168.177.227"  # Your camera's IP address
-    # PORT = 80                 # HTTP port, usually 80 or 8080
-    # ONVIF_USER = ""           # Username (if required)
-    # ONVIF_PASS = ""           # Password (if required)
     devices = discover_onvif_devices(timeout=5)
     
     if not devices:
@@ -343,7 +341,7 @@ def main():
     port = parsed.port or 80
     
     # Step 2: Connect to the device and get profiles (using manual info)
-    profiles = get_all_profiles(HOST, PORT, ONVIF_USER, ONVIF_PASS)
+    profiles = get_all_profiles(host, port, ONVIF_USER, ONVIF_PASS)
     if not profiles:
         print("❌ Cannot get Profile info from the device.")
         sys.exit(1)
@@ -388,7 +386,6 @@ def main():
     # Step 5: Setup video capture
     print("\n🎥 Setting up RTSP stream...")
     cap = setup_rtsp_stream(rtsp_url)
-    
     if not cap.isOpened():
         print("❌ Failed to open RTSP stream")
         sys.exit(1)

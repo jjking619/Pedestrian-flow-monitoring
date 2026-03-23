@@ -1,15 +1,15 @@
 # Core computer vision and numerical libraries
-opencv-python>=4.5.0
-numpy>=1.19.0
+opencv-python==4.13.0.92
+numpy==2.2.6
 
 # Scientific computing and optimization
-scipy>=1.7.0
+scipy==1.15.3
 
 # Performance optimization
-numba>=0.64.0
+numba==0.64.0
 
 # ONVIF camera discovery and control
-wsdiscovery>=2.0.0
-onvif-zeep>=0.3.0
+wsdiscovery==2.1.2
+onvif-zeep ==0.2.12
 
 

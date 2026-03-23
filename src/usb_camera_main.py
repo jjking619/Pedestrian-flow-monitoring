@@ -8,6 +8,8 @@ import queue
 import traceback
 from bytetrack import BYTETracker  
 from line_counter import LineCounter
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='numba')
 
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
@@ -294,8 +296,8 @@ def main():
     print("Press 'ESC' to exit")
 
     # Set window properties
-    cv2.namedWindow("Pedestrian Flow Monitor (USB)", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("Pedestrian Flow Monitor (USB)", FRAME_WIDTH, FRAME_HEIGHT)
+    cv2.namedWindow("People Counting Device", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("People Counting Device", FRAME_WIDTH, FRAME_HEIGHT)
 
     frame_id = 0
     last_processed_frame_id = -1
@@ -370,18 +372,18 @@ def main():
 
                 # Update cache and display
                 last_display_frame = display_frame.copy()
-                cv2.imshow("Pedestrian Flow Monitor (USB)", display_frame)
+                cv2.imshow("People Counting Device", display_frame)
                 startup_phase = False
                 
             else:
                 # During startup phase or when no new results, show current raw frame
                 if startup_phase:
-                    cv2.imshow("Pedestrian Flow Monitor (USB)", frame)
+                    cv2.imshow("People Counting Device", frame)
                 else:
                     if last_display_frame is not None:
-                        cv2.imshow("Pedestrian Flow Monitor (USB)", last_display_frame)
+                        cv2.imshow("People Counting Device", last_display_frame)
                     else:
-                        cv2.imshow("Pedestrian Flow Monitor (USB)", frame)
+                        cv2.imshow("People Counting Device", frame)
 
             key = cv2.waitKey(1) & 0xFF
             if key == 27:  # ESC
