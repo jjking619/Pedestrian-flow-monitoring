@@ -142,11 +142,11 @@ def ai_processing_worker(net, actual_fps):
     """Worker thread for AI processing and tracking"""
     # Use ByteTrack for object tracking
     tracker = BYTETracker(
-        track_thresh=0.5,      # Detection threshold for tracking
-        high_thresh=0.5,       # High confidence threshold
-        low_thresh=0.1,        # Low confidence threshold 
-        match_thresh=0.7,      # Matching threshold
-        track_buffer=30,       # Tracking buffer size
+        track_thresh=0.2,      # Detection threshold for tracking
+        high_thresh=0.3,       # High confidence threshold
+        low_thresh=0.05,        # Low confidence threshold 
+        match_thresh=0.5,      # Matching threshold
+        track_buffer=60,       # Tracking buffer size
         frame_rate=actual_fps, # Frame rate
         use_reid=True,         # Enable ReID features
     )
@@ -308,6 +308,7 @@ def main():
             if result is not None and result['frame_id'] >= last_processed_frame_id:
                 display_frame = result['frame'].copy()
                 persons = result['persons']
+                tracks = result['tracks']
                 total_count = result['total_count']
                 total_unique_count = result['total_unique_count']
                 current_frame_id = result['frame_id']
@@ -315,17 +316,10 @@ def main():
                 last_processed_frame_id = current_frame_id
 
                 # Draw detection boxes
-                for x1, y1, x2, y2, score in persons:
+                for x1, y1, x2, y2, track_id in tracks:
                     cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    cv2.putText(
-                        display_frame,
-                        f"person {score:.2f}",
-                        (x1, y1 - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (0, 255, 0),
-                        1
-                    )
+                    cv2.putText(display_frame, f"ID:{track_id}", (x1, y1-5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                 
                 # Display counting statistics
                 cv2.putText(display_frame, f"Current Count: {total_count}", (20, 80),
