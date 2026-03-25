@@ -138,7 +138,7 @@ def setup_video_capture(video_path):
     
     return cap
 
-def ai_processing_worker(net, actual_fps):
+def ai_processing_worker(net, actual_fps, frame_shape):
     """Worker thread for AI processing and tracking"""
     # Use ByteTrack for object tracking
     tracker = BYTETracker(
@@ -175,17 +175,17 @@ def ai_processing_worker(net, actual_fps):
                 
             # Run person detection
             persons = yolo_v5_person_infer(frame, net)
-                
             # Call tracker.update() directly with frame for internal ReID feature extraction
             tracks = tracker.update(persons, frame=frame)
             
             # Initialize counter on first frame processing
             if counter is None:
-                counter = LineCounter()
+                # 创建LineCounter实例，支持虚拟线统计
+                counter = LineCounter(line_position=None, direction='horizontal')
 
-            # Update counter
-            counter.update(tracks)
-            current_count, total_count = counter.get_counts()
+            # Update counter with frame_shape for virtual line positioning
+            counter.update(tracks,frame_shape)
+            current_count, total_count, in_count, out_count = counter.get_counts()
 
             # Put results in result queue (overwrite old results if queue is full)
             try:
@@ -195,6 +195,8 @@ def ai_processing_worker(net, actual_fps):
                     'tracks': tracks,
                     'total_count': total_count,
                     'current_count': current_count,
+                    'in_count': in_count,
+                    'out_count': out_count,
                     'frame_id': frame_id,
                 })
             except queue.Full:
@@ -207,6 +209,8 @@ def ai_processing_worker(net, actual_fps):
                         'tracks': tracks,
                         'total_count': total_count,
                         'current_count': current_count,
+                        'in_count': in_count,
+                        'out_count': out_count,
                         'frame_id': frame_id,
                     })
                 except queue.Empty:
@@ -234,6 +238,7 @@ def main():
     actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     actual_fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_shape = (actual_height, actual_width)
     
     print(f"  Frame dimensions: {actual_width}x{actual_height}")
     print(f"  Frame rate: {actual_fps:.2f} fps")
@@ -252,7 +257,7 @@ def main():
     
     # Step 3: Start AI processing worker thread
     print("\nStarting AI processing worker thread...")
-    worker_thread = threading.Thread(target=ai_processing_worker, args=(net, actual_fps))
+    worker_thread = threading.Thread(target=ai_processing_worker, args=(net, actual_fps, frame_shape))
     worker_thread.daemon = True
     worker_thread.start()
 
@@ -268,6 +273,12 @@ def main():
     last_processed_frame_id = -1
     last_display_frame = None  # Cache the last displayed annotated frame
     startup_phase = True  # Startup phase flag
+    
+    # Calculate delay between frames based on actual FPS
+    if actual_fps > 0:
+        frame_delay_ms = int(1000 / actual_fps)
+    else:
+        frame_delay_ms = 33  # Default to ~30fps if FPS is invalid
 
     try:
         while not stop_event.is_set():
@@ -311,6 +322,8 @@ def main():
                 tracks = result['tracks']
                 total_count = result['total_count']
                 current_count = result['current_count']
+                in_count = result['in_count']
+                out_count = result['out_count']
                 current_frame_id = result['frame_id']
                 # Update last processed frame ID
                 last_processed_frame_id = current_frame_id
@@ -320,12 +333,32 @@ def main():
                     cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cv2.putText(display_frame, f"ID:{track_id}", (x1, y1-5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                # for x1, y1, x2, y2, score in persons:
+                #     cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                #     cv2.putText(
+                #         display_frame,
+                #         f"person {score:.2f}",
+                #         (x1, y1 - 5),
+                #         cv2.FONT_HERSHEY_SIMPLEX,
+                #         0.5,
+                #         (0, 255, 0),
+                #         1
+                #     )
                 
                 # Display counting statistics
-                cv2.putText(display_frame, f"Current Count: {current_count}", (20, 80),
+                cv2.putText(display_frame, f"Current: {current_count}", (20, 80),
                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(display_frame, f"Total Count: {total_count}", (20, 110),
+                cv2.putText(display_frame, f"In: {in_count}", (20, 110),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(display_frame, f"Out: {out_count}", (20, 140),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.putText(display_frame, f"Total: {total_count}", (20, 170),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                
+                # Draw virtual line
+                line_y = frame_shape[0] // 2
+                cv2.line(display_frame, (0, line_y), (display_frame.shape[1], line_y), (255, 0, 0), 2)
+                
                 last_display_frame = display_frame.copy()
                 cv2.imshow("People Counting Device", display_frame)
                 startup_phase = False  # End of startup phase
@@ -341,7 +374,8 @@ def main():
                     else:
                         cv2.imshow("People Counting Device", frame)
 
-            key = cv2.waitKey(1) & 0xFF
+            # Add delay to match video's original frame rate
+            key = cv2.waitKey(frame_delay_ms) & 0xFF
             if key == 27:  # ESC
                 print("Exit requested by user")
                 stop_event.set()

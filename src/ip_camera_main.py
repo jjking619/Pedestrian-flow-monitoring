@@ -280,11 +280,12 @@ def ai_processing_worker(net, actual_fps):
             
             # Initialize counter on first frame processing
             if counter is None:
-                counter = LineCounter()
+                frame_shape = (frame.shape[0], frame.shape[1])
+                counter = LineCounter(line_position=None, direction='horizontal')
 
-            # Update counter
-            counter.update(tracks)
-            current_count, total_count = counter.get_counts()
+            # Update counter with frame_shape for virtual line positioning
+            counter.update(tracks,frame_shape)
+            current_count, total_count, in_count, out_count = counter.get_counts()
 
             # Put results in result queue (overwrite old results if queue is full)
             try:
@@ -294,6 +295,8 @@ def ai_processing_worker(net, actual_fps):
                     'tracks': tracks,
                     'total_count': total_count,
                     'current_count': current_count,
+                    'in_count': in_count,
+                    'out_count': out_count,
                     'frame_id': frame_id,
                 })
             except queue.Full:
@@ -306,6 +309,8 @@ def ai_processing_worker(net, actual_fps):
                         'tracks': tracks,
                         'total_count': total_count,
                         'current_count': current_count,
+                        'in_count': in_count,
+                        'out_count': out_count,
                         'frame_id': frame_id,
                     })
                 except queue.Empty:
@@ -368,7 +373,7 @@ def main():
         # - "yolov5n_320.onnx": Smaller and faster, slightly lower precision
         # - "yolov5n_416.onnx": Balances speed and precision (default)
         # - "yolov5n_640.onnx": Higher precision, but slower speed
-        model_path = "yolov5n_640.onnx"
+        model_path = "yolov5n_416.onnx"
         if not os.path.exists(model_path):
             print(f"Model file not found: {model_path}")
             sys.exit(1)
@@ -451,11 +456,14 @@ def main():
 
             if result is not None and result['frame_id'] >= last_processed_frame_id:
                 display_frame = result['frame'].copy()
-                tracks=result['tracks']
+                tracks = result['tracks']
                 persons = result['persons']
                 total_count = result['total_count']
                 current_count = result['current_count']
+                in_count = result['in_count']
+                out_count = result['out_count']
                 current_frame_id = result['frame_id']
+                
                 # Update last processed frame ID
                 last_processed_frame_id = current_frame_id
 
@@ -464,15 +472,35 @@ def main():
                     # Handle both old format (5 elements) and new format (6+ elements)
                     if len(track) >= 5:
                         x1, y1, x2, y2, track_id = track[:5]
-                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                        cv2.putText(display_frame, f"ID:{track_id}", (x1, y1-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                    
+                        cv2.rectangle(display_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+                        cv2.putText(display_frame, f"ID:{int(track_id)}", 
+                                   (int(x1), int(y1) - 5),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                # for x1, y1, x2, y2, score in persons:
+                #     cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                #     cv2.putText(
+                #         display_frame,
+                #         f"person {score:.2f}",
+                #         (x1, y1 - 5),
+                #         cv2.FONT_HERSHEY_SIMPLEX,
+                #         0.5,
+                #         (0, 255, 0),
+                #         1
+                #     )
+                # Draw virtual line (horizontal line at middle of frame)
+                line_y = display_frame.shape[0] // 2
+                cv2.line(display_frame, (0, line_y), (display_frame.shape[1], line_y), (255, 0, 0), 2)
+                
                 # Display counting statistics
-                cv2.putText(display_frame, f"Current Count: {current_count}", (20, 80),
+                cv2.putText(display_frame, f"Current: {current_count}", (20, 80),
                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(display_frame, f"Total Count: {total_count}", (20, 110),
+                cv2.putText(display_frame, f"In: {in_count}", (20, 110),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(display_frame, f"Out: {out_count}", (20, 140),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.putText(display_frame, f"Total: {total_count}", (20, 170),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                
                 last_display_frame = display_frame.copy()
                 cv2.imshow("People Counting Device", display_frame)
                 startup_phase = False  # End of startup phase
