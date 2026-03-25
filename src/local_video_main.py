@@ -184,8 +184,8 @@ def ai_processing_worker(net, actual_fps):
                 counter = LineCounter()
 
             # Update counter
-            counter.update(tracks,persons)
-            total_unique_count, total_count = counter.get_counts()
+            counter.update(tracks)
+            current_count, total_count = counter.get_counts()
 
             # Put results in result queue (overwrite old results if queue is full)
             try:
@@ -194,7 +194,7 @@ def ai_processing_worker(net, actual_fps):
                     'persons': persons,
                     'tracks': tracks,
                     'total_count': total_count,
-                    'total_unique_count': total_unique_count,
+                    'current_count': current_count,
                     'frame_id': frame_id,
                 })
             except queue.Full:
@@ -206,7 +206,7 @@ def ai_processing_worker(net, actual_fps):
                         'persons': persons,
                         'tracks': tracks,
                         'total_count': total_count,
-                        'total_unique_count': total_unique_count,
+                        'current_count': current_count,
                         'frame_id': frame_id,
                     })
                 except queue.Empty:
@@ -310,7 +310,7 @@ def main():
                 persons = result['persons']
                 tracks = result['tracks']
                 total_count = result['total_count']
-                total_unique_count = result['total_unique_count']
+                current_count = result['current_count']
                 current_frame_id = result['frame_id']
                 # Update last processed frame ID
                 last_processed_frame_id = current_frame_id
@@ -322,9 +322,9 @@ def main():
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                 
                 # Display counting statistics
-                cv2.putText(display_frame, f"Current Count: {total_count}", (20, 80),
+                cv2.putText(display_frame, f"Current Count: {current_count}", (20, 80),
                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(display_frame, f"Total Count: {total_unique_count}", (20, 110),
+                cv2.putText(display_frame, f"Total Count: {total_count}", (20, 110),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
                 last_display_frame = display_frame.copy()
                 cv2.imshow("People Counting Device", display_frame)

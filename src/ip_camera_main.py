@@ -7,7 +7,6 @@ import threading
 import queue
 import traceback
 
-from reid_worker import ReIDWorker
 from urllib.parse import urlparse
 from bytetrack import BYTETracker  
 from line_counter import LineCounter
@@ -249,11 +248,8 @@ def ai_processing_worker(net, actual_fps):
         match_thresh=0.5,      # Matching threshold
         track_buffer=60,       # Tracking buffer size
         frame_rate=actual_fps, # Frame rate
-        use_reid=False,         #  Enable ReID features
+        use_reid=True,         # Enable ReID features
     )
-    
-    reid_worker = ReIDWorker("osnet_x0_25_market1501.onnx")
-    reid_worker.start()
     counter = None
     
     while not stop_event.is_set():
@@ -286,18 +282,8 @@ def ai_processing_worker(net, actual_fps):
             if counter is None:
                 counter = LineCounter()
 
-            for x1, y1, x2, y2, track_id in tracks:
-                tlwh = [x1, y1, x2 - x1, y2 - y1]
-                if frame_id % 5 == 0:
-                    reid_worker.submit(track_id, frame, tlwh)
-
-            track_features = []
-            for x1, y1, x2, y2, track_id in tracks:
-                feat = reid_worker.get_feature(track_id)
-                track_features.append(feat)
-
-            # Update counter with features
-            counter.update(tracks, persons, track_features)
+            # Update counter
+            counter.update(tracks)
             current_count, total_count = counter.get_counts()
 
             # Put results in result queue (overwrite old results if queue is full)
@@ -331,8 +317,6 @@ def ai_processing_worker(net, actual_fps):
             print(f"AI processing error: {e}")
             traceback.print_exc()
     
-    reid_worker.stop()
-    reid_worker.join(timeout=1.0)
 
 def main():
     # Step 1: Skip discovery - Directly specify the camera info
@@ -384,7 +368,7 @@ def main():
         # - "yolov5n_320.onnx": Smaller and faster, slightly lower precision
         # - "yolov5n_416.onnx": Balances speed and precision (default)
         # - "yolov5n_640.onnx": Higher precision, but slower speed
-        model_path = "yolov5n_416.onnx"
+        model_path = "yolov5n_640.onnx"
         if not os.path.exists(model_path):
             print(f"Model file not found: {model_path}")
             sys.exit(1)
@@ -476,10 +460,13 @@ def main():
                 last_processed_frame_id = current_frame_id
 
                 # Draw detection boxes
-                for x1, y1, x2, y2, track_id in tracks:
-                    cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    cv2.putText(display_frame, f"ID:{track_id}", (x1, y1-5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                for track in tracks:
+                    # Handle both old format (5 elements) and new format (6+ elements)
+                    if len(track) >= 5:
+                        x1, y1, x2, y2, track_id = track[:5]
+                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.putText(display_frame, f"ID:{track_id}", (x1, y1-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                     
                 # Display counting statistics
                 cv2.putText(display_frame, f"Current Count: {current_count}", (20, 80),
