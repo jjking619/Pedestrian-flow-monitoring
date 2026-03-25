@@ -6,9 +6,8 @@ import sys
 import threading
 import queue
 import traceback
-import warnings
-warnings.filterwarnings('ignore', category=UserWarning, module='numba')
 
+from reid_worker import ReIDWorker
 from urllib.parse import urlparse
 from bytetrack import BYTETracker  
 from line_counter import LineCounter
@@ -22,8 +21,8 @@ ONVIF_USER =""
 ONVIF_PASS =""
 
 # Global variables for thread communication
-frame_queue = queue.Queue(maxsize=2)  # Queue to store frames for processing
-result_queue = queue.Queue(maxsize=1)  # Store latest processing result
+frame_queue = queue.Queue(maxsize=5)  # Queue to store frames for processing
+result_queue = queue.Queue(maxsize=2)  # Store latest processing result
 stop_event = threading.Event()
 
 def discover_onvif_devices(timeout=3):
@@ -244,15 +243,17 @@ def ai_processing_worker(net, actual_fps):
     """Worker thread for AI processing and tracking"""
     # Use ByteTrack for object tracking
     tracker = BYTETracker(
-        track_thresh=0.3,      # Detection threshold for tracking
-        high_thresh=0.3,       # High confidence threshold
+        track_thresh=0.2,      # Detection threshold for tracking
+        high_thresh=0.25,       # High confidence threshold
         low_thresh=0.05,        # Low confidence threshold 
-        match_thresh=0.6,      # Matching threshold
+        match_thresh=0.5,      # Matching threshold
         track_buffer=60,       # Tracking buffer size
         frame_rate=actual_fps, # Frame rate
-        use_reid=True,         # Enable ReID features
+        use_reid=False,         #  Enable ReID features
     )
     
+    reid_worker = ReIDWorker("osnet_x0_25_market1501.onnx")
+    reid_worker.start()
     counter = None
     
     while not stop_event.is_set():
@@ -285,9 +286,19 @@ def ai_processing_worker(net, actual_fps):
             if counter is None:
                 counter = LineCounter()
 
-            # Update counter
-            counter.update(tracks,persons)
-            total_unique_count, total_count = counter.get_counts()
+            for x1, y1, x2, y2, track_id in tracks:
+                tlwh = [x1, y1, x2 - x1, y2 - y1]
+                if frame_id % 5 == 0:
+                    reid_worker.submit(track_id, frame, tlwh)
+
+            track_features = []
+            for x1, y1, x2, y2, track_id in tracks:
+                feat = reid_worker.get_feature(track_id)
+                track_features.append(feat)
+
+            # Update counter with features
+            counter.update(tracks, persons, track_features)
+            current_count, total_count = counter.get_counts()
 
             # Put results in result queue (overwrite old results if queue is full)
             try:
@@ -296,7 +307,7 @@ def ai_processing_worker(net, actual_fps):
                     'persons': persons,
                     'tracks': tracks,
                     'total_count': total_count,
-                    'total_unique_count': total_unique_count,
+                    'current_count': current_count,
                     'frame_id': frame_id,
                 })
             except queue.Full:
@@ -308,7 +319,7 @@ def ai_processing_worker(net, actual_fps):
                         'persons': persons,
                         'tracks': tracks,
                         'total_count': total_count,
-                        'total_unique_count': total_unique_count,
+                        'current_count': current_count,
                         'frame_id': frame_id,
                     })
                 except queue.Empty:
@@ -319,6 +330,9 @@ def ai_processing_worker(net, actual_fps):
         except Exception as e:
             print(f"AI processing error: {e}")
             traceback.print_exc()
+    
+    reid_worker.stop()
+    reid_worker.join(timeout=1.0)
 
 def main():
     # Step 1: Skip discovery - Directly specify the camera info
@@ -456,7 +470,7 @@ def main():
                 tracks=result['tracks']
                 persons = result['persons']
                 total_count = result['total_count']
-                total_unique_count = result['total_unique_count']
+                current_count = result['current_count']
                 current_frame_id = result['frame_id']
                 # Update last processed frame ID
                 last_processed_frame_id = current_frame_id
@@ -468,9 +482,9 @@ def main():
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                     
                 # Display counting statistics
-                cv2.putText(display_frame, f"Current Count: {total_count}", (20, 80),
+                cv2.putText(display_frame, f"Current Count: {current_count}", (20, 80),
                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(display_frame, f"Total Count: {total_unique_count}", (20, 110),
+                cv2.putText(display_frame, f"Total Count: {total_count}", (20, 110),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
                 last_display_frame = display_frame.copy()
                 cv2.imshow("People Counting Device", display_frame)

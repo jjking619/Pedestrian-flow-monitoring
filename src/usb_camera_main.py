@@ -15,8 +15,8 @@ FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 
 # Global variables for thread communication
-frame_queue = queue.Queue(maxsize=2)
-result_queue = queue.Queue(maxsize=1)
+frame_queue = queue.Queue(maxsize=5)
+result_queue = queue.Queue(maxsize=2)
 stop_event = threading.Event()
 
 def find_available_camera():
@@ -89,7 +89,7 @@ def yolo_v5_person_infer(
     net,
     conf_thresh=0.25,
     iou_thresh=0.45,
-    input_size=416
+    input_size=320
 ):
     """
     OpenCV DNN + YOLOv5n ONNX
@@ -274,7 +274,7 @@ def main():
         # - "yolov5n_320.onnx": Smaller and faster, slightly lower precision
         # - "yolov5n_416.onnx": Balances speed and precision (default)
         # - "yolov5n_640.onnx": Higher precision, but slower speed
-        model_path  = "yolov5n_416.onnx"
+        model_path  = "yolov5n_320.onnx"
         if not os.path.exists(model_path):
             print(f"Model file not found: {model_path}")
             sys.exit(1)

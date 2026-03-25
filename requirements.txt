@@ -5,11 +5,12 @@ numpy==2.2.6
 # Scientific computing and optimization
 scipy==1.15.3
 
-# Performance optimization
-numba==0.64.0
-
 # ONVIF camera discovery and control
 wsdiscovery==2.1.2
 onvif-zeep ==0.2.12
 
-
+# Others
+requests==2.31.0 
+urllib3==2.0.4 
+charset-normalizer==3.3.2 
+chardet==5.0.0

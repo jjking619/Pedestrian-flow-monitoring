@@ -1,10 +1,10 @@
-# 
+# 人流量统计设备
 
-行人流量监控系统 - 基于YOLOv5 + ByteTrack + ReID 的实时人流量统计解决方案
+[中文](README_zh.md) | English
 
 ## 🎯 项目概述
 
-本项目是一个运行在环境下的轻量级行人流量监控系统，集成了目标检测、目标跟踪和行人重识别（ReID）技术，能够：
+本项目是一个运行在Quectel Pi H1智能主控板下的轻量级人流量统计设备，集成了目标检测、目标跟踪和行人重识别（ReID）技术，能够：
 
 - 实时检测视频流中的人体目标
 - 使用ByteTrack算法进行稳定的目标跟踪
@@ -12,10 +12,12 @@
 - 支持USB摄像头、IP摄像头和本地视频文件输入
 - 提供实时人数统计和累计去重人数统计
 
+[界面预览]()
+
 ## ✨ 主要特性
 
 ### 核心功能
-- **多源输入支持**：USB摄像头、ONVIF IP摄像头、RTSP流、本地视频文件
+- **多源输入支持**：USB摄像头、ONVIF IP摄像头、本地视频文件
 - **实时目标检测**：基于YOLOv5s ONNX模型，支持多种输入尺寸（320/416/640）
 - **稳定目标跟踪**：集成ByteTrack算法，有效处理遮挡和目标丢失场景
 - **智能人员统计**：
@@ -33,11 +35,11 @@
 ## 🏗️ 系统架构
 
 ```
-行人流量监控系统
+人流量统计设备
 ├── 视频输入层
 │   ├── USB摄像头 (usb_camera_main.py)
 │   ├── IP摄像头 (ip_camera_main.py)  
-│   └── 视频文件 (test_video_simple.py)
+│   └── 视频文件 (local_video_main.py)
 ├── AI处理层
 │   ├── YOLOv5目标检测 (yolo_v5_person_infer)
 │   ├── ByteTrack目标跟踪 (bytetrack.py)
@@ -48,15 +50,9 @@
 
 ## 🔧 安装依赖
 
-### 系统依赖
-```bash
-# 确保用户有摄像头访问权限
-sudo usermod -aG video $USER
-sudo usermod -aG input $USER
+### 克隆代码
+```
 
-# 创建udev规则（可选，用于更好的摄像头权限管理）
-echo 'KERNEL=="video*", SUBSYSTEM=="video4linux", GROUP="video", MODE="0666"' | sudo tee /etc/udev/rules.d/99-webcam-permissions.rules
-sudo udevadm trigger
 ```
 
 ### Python依赖

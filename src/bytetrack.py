@@ -1,6 +1,4 @@
 import numpy as np
-import numba
-from numba import njit, prange
 from scipy.optimize import linear_sum_assignment
 from reid_extractor import ReIDExtractor
 
@@ -357,7 +355,6 @@ def ious(atlbrs, btlbrs):
     iou = inter_area / np.maximum(union_area, 1e-6)
     return iou
 
-@njit(parallel=True, fastmath=True, nogil=True, nopython=True)
 def compute_iou_matrix(atlbrs, btlbrs):
     """
     Compute IOU matrix between two sets of bounding boxes (tlbr format).
@@ -369,7 +366,7 @@ def compute_iou_matrix(atlbrs, btlbrs):
     n = btlbrs.shape[0]
     iou_matrix = np.empty((m, n), dtype=np.float32)
 
-    for i in prange(m):  # Parallel outer loop
+    for i in range(m):  # Parallel outer loop
         a_x1, a_y1, a_x2, a_y2 = atlbrs[i]
         a_area = (a_x2 - a_x1) * (a_y2 - a_y1)
         if a_area <= 0:
@@ -421,7 +418,6 @@ def iou_distance(atracks, btracks):
 
     return compute_iou_matrix(atlbrs.astype(np.float32), btlbrs.astype(np.float32))
 
-@njit(parallel=True, fastmath=True, nogil=True, nopython=True)
 def fuse_score_matrix(cost_matrix, scores):
     """
     cost_matrix: (M, N) IOU distance matrix
@@ -431,7 +427,7 @@ def fuse_score_matrix(cost_matrix, scores):
     m, n = cost_matrix.shape
     fuse_cost = np.empty((m, n), dtype=cost_matrix.dtype)
 
-    for i in prange(m):
+    for i in range(m):
         for j in range(n):
             iou_sim = 1.0 - cost_matrix[i, j]
             fuse_sim = iou_sim * scores[j]
@@ -496,7 +492,7 @@ class BYTETracker(object):
     def __init__(self, track_thresh=0.5, high_thresh=0.5, low_thresh=0.1, match_thresh=0.8, 
                  track_buffer=30, frame_rate=30, use_reid=False, 
                  reid_model_path="osnet_x0_25_market1501.onnx",
-                 iou_weight=0.6, feat_weight=0.4):
+                 iou_weight=0.6, feat_weight=0.3):
         self.tracked_stracks = []
         self.lost_stracks = []
         self.removed_stracks = []
