@@ -1,6 +1,6 @@
 # 人流量统计设备
 
-[中文](README_zh.md) | English
+[中文](README_zh.md) | [English](README.md)
 
 ## 🎯 项目概述
 
@@ -9,8 +9,8 @@
 - 实时检测视频流中的人体目标
 - 使用ByteTrack算法进行稳定的目标跟踪
 - 基于ReID特征进行人员去重统计
-- 支持USB摄像头、IP摄像头和本地视频文件输入
-- 提供实时人数统计和累计去重人数统计
+- 支持USB摄像头、IP摄像头、本地视频文件
+- 提供实时人数统计、累计去重人数统计和进出方向统计
 
 [界面预览]()
 
@@ -18,19 +18,14 @@
 
 ### 核心功能
 - **多源输入支持**：USB摄像头、ONVIF IP摄像头、本地视频文件
-- **实时目标检测**：基于YOLOv5s ONNX模型，支持多种输入尺寸（320/416/640）
+- **实时目标检测**：基于YOLOv5n ONNX模型，支持多种输入尺寸（320/416/640）
 - **稳定目标跟踪**：集成ByteTrack算法，有效处理遮挡和目标丢失场景
 - **智能人员统计**：
   - 实时人数统计（当前帧内的人数）
   - 累计去重人数统计（基于track_id的历史累计人数）
+  - 进出方向统计（基于虚拟线的流向分析）
 - **ReID增强**：可选启用OSNet ReID模型，提升跟踪稳定性
-- **低延迟设计**：双线程架构，确保视频采集不被AI处理阻塞
 
-### 技术优势
-- **轻量级部署**：使用OpenCV DNN后端，无需PyTorch依赖
-- **树莓派优化**：针对ARM设备进行性能优化
-- **模块化设计**：各功能组件独立，便于维护和扩展
-- **内存友好**：合理的队列大小和缓冲区设置
 
 ## 🏗️ 系统架构
 
@@ -39,9 +34,9 @@
 ├── 视频输入层
 │   ├── USB摄像头 (usb_camera_main.py)
 │   ├── IP摄像头 (ip_camera_main.py)  
-│   └── 视频文件 (local_video_main.py)
+│   └── 本地视频文件 (local_video_main.py)
 ├── AI处理层
-│   ├── YOLOv5目标检测 (yolo_v5_person_infer)
+│   ├── YOLOv5n目标检测 (yolo_v5_person_infer)
 │   ├── ByteTrack目标跟踪 (bytetrack.py)
 │   └── OSNet ReID特征提取 (reid_extractor.py)
 └── 统计输出层
@@ -51,8 +46,9 @@
 ## 🔧 安装依赖
 
 ### 克隆代码
-```
-
+```bash
+git clone <repository-url>
+cd demo-people-counting-device/
 ```
 
 ### Python依赖
@@ -61,36 +57,21 @@
 pip3 install -r requirements.txt
 ```
 
-**requirements.txt 内容：**
-```txt
-# Core computer vision and numerical libraries
-opencv-python>=4.5.0
-numpy>=1.19.0
-
-# Scientific computing and optimization  
-scipy>=1.7.0
-
-# Performance optimization
-numba>=0.64.0
-
-# ONVIF camera discovery and control
-wsdiscovery>=2.0.0
-onvif-zeep>=0.3.0
-```
-
 ## 🤖 模型准备
 
 ### 目标检测模型
-项目支持以下YOLOv5s ONNX模型（位于 `models/` 目录）：
+项目支持以下YOLOv5n ONNX模型（位于 `src/` 目录）：
 
 | 模型文件 | 输入尺寸 | 特点 |
 |---------|---------|------|
-| `yolov5s_320.onnx` | 320×320 | 速度最快，精度稍低 |
-| `yolov5s_416.onnx` | 416×416 | 速度与精度平衡（默认）|
-| `yolov5s_640.onnx` | 640×640 | 精度最高，速度较慢 |
+| `yolov5n_320.onnx` | 320×320 | 速度最快，精度稍低（USB/IP模式默认）|
+| `yolov5n_416.onnx` | 416×416 | 速度与精度平衡（本地视频文件测试模式默认）|
+| `yolov5n_640.onnx` | 640×640 | 精度最高，速度较慢 |
+
+> **注意**：所有模型文件已包含在项目中，位于 `src/` 目录下，无需额外下载。
 
 ### 行人重识别模型
-- **ReID模型**：`osnet_x0_25_market1501.onnx`（需放置在 `src/` 目录）
+- **ReID模型**：`osnet_x0_25_market1501.onnx`（位于 `src/` 目录）
 - **输入尺寸**：256×128（宽×高）
 - **特征维度**：512维归一化特征向量
 
@@ -101,99 +82,127 @@ onvif-zeep>=0.3.0
 ### USB摄像头模式
 
 ```bash
-cd /home/pi/pedestrian-flow-monitoring/src
+cd ~/demo-people-counting-device/src
 python3 usb_camera_main.py
 ```
-
-**功能特点：**
-- 自动检测可用的USB摄像头设备（ID 0-9）
-- 自动设置640×480分辨率以优化树莓派性能
-- 实时显示检测框和统计信息
 
 ### IP摄像头模式
 
 ```bash
-cd /home/pi/pedestrian-flow-monitoring/src  
+cd ~/demo-people-counting-device/src  
 python3 ip_camera_main.py
 ```
 
-**配置说明：**
-编辑 `ip_camera_main.py` 文件中的摄像头连接参数：
-
-```python
-# 🔧 手动指定摄像头详情（替换为您的实际值）
-HOST = "192.168.177.227"  # 摄像头IP地址
-PORT = 80                 # HTTP端口，通常为80或8080
-ONVIF_USER = ""           # 用户名（如果需要）
-ONVIF_PASS = ""           # 密码（如果需要）
-```
-
-**功能特点：**
-- 支持ONVIF协议自动发现摄像头Profile
-- 自动选择子码流（sub-stream）以降低带宽消耗
-- 使用TCP传输确保RTSP流稳定性
-
-### 视频文件测试
+### 本地视频文件测试
 
 ```bash
-cd /home/pi/pedestrian-flow-monitoring
-python3 test_video_simple.py --video street.mp4
+cd ~/demo-people-counting-device/src
+python3 local_video_main.py --video ../asset/street.mp4
 ```
 
 **命令行参数：**
-- `--video`: 指定视频文件路径（默认使用 `street.mp4`）
-- `--model`: 指定YOLO模型路径（可选）
+- `--video`: 指定视频文件路径（必填）
+- `--model`: 指定YOLO模型路径（可选，默认使用 `yolov5n_416.onnx`）
 
-## ⚙️ 配置说明
+**示例：**
+```bash
+# 使用默认模型处理视频
+python3 local_video_main.py --video test_video.mp4
+
+# 指定高精度模型
+python3 local_video_main.py --video test_video.mp4 --model yolov5n_640.onnx
+```
+
+
+
+## ⚙️ 配置详情
 
 ### YOLO检测参数
-在 `usb_camera_main.py` 和 `ip_camera_main.py` 中可调整：
+代码中实际使用的参数值：
 
 ```python
-# 检测置信度阈值（建议≥0.5以减少误检）
-conf_thresh=0.5
+# 检测置信度阈值（实际值）
+conf_thresh=0.25
 
-# NMS IOU阈值（建议≥0.5以减少抖动）
-iou_thresh=0.5
+# NMS IOU阈值（实际值）
+iou_thresh=0.45
 
-# YOLO输入尺寸（需与模型匹配）
-input_size=416
+# YOLO输入尺寸
+input_size=320  # USB/IP模式默认值
+input_size=416  # 视频文件模式默认值
 ```
 
 ### ByteTrack跟踪参数
+
+**USB摄像头和IP摄像头模式：**
 ```python
 tracker = BYTETracker(
-    track_thresh=0.5,      # 跟踪检测阈值
-    high_thresh=0.5,       # 高置信度阈值
-    low_thresh=0.1,        # 低置信度阈值（ByteTrack核心特性）
-    match_thresh=0.7,      # 匹配阈值
-    track_buffer=30,       # 跟踪缓冲区大小
-    frame_rate=actual_fps, # 帧率
+    track_thresh=0.2,      # 跟踪检测阈值
+    high_thresh=0.25,      # 高置信度阈值
+    low_thresh=0.05,       # 低置信度阈值（ByteTrack核心特性）
+    match_thresh=0.5,      # 匹配阈值
+    track_buffer=60,       # 跟踪缓冲区大小
+    frame_rate=actual_fps, # 实际帧率
     use_reid=True,         # 启用ReID特征
+    iou_weight=0.6,        # IOU距离权重
+    feat_weight=0.3,       # 特征距离权重
 )
 ```
 
-### ReID融合权重
-当启用ReID时，可调整IOU和特征的融合权重：
-
+**本地视频文件模式：**
 ```python
-# 在BYTETracker初始化中设置
-iou_weight=0.3,    # IOU距离权重（建议≤0.3）
-feat_weight=0.7,   # 特征距离权重（建议≥0.7）
+tracker = BYTETracker(
+    track_thresh=0.2,      # 跟踪检测阈值
+    high_thresh=0.3,       # 高置信度阈值
+    low_thresh=0.05,       # 低置信度阈值
+    match_thresh=0.5,      # 匹配阈值
+    track_buffer=30,       # 跟踪缓冲区大小
+    frame_rate=30,         # 固定帧率
+    use_reid=True,         # 启用ReID特征
+    iou_weight=0.6,        # IOU距离权重
+    feat_weight=0.3,       # 特征距离权重
+)
 ```
 
-## 🚀 性能优化
+### 虚拟线计数配置
+- **默认位置**：画面中间水平线（画面高度的一半）
+- **计数逻辑**：
+  - 向下穿越虚拟线：计入"In"（进入）
+  - 向上穿越虚拟线：计入"Out"（离开）
+  - 每个track_id仅计数一次，防止重复统计
 
-### 智能主控板专用优化
-1. **分辨率选择**：USB摄像头默认使用640×480，平衡性能和精度
-2. **模型选择**：推荐使用 `yolov5s_416.onnx` 或 `yolov5s_320.onnx`
-3. **线程架构**：生产者-消费者模式，避免视频采集阻塞
-4. **缓冲区设置**：`CAP_PROP_BUFFERSIZE=1` 减少延迟
+### RTSP流优化（IP摄像头模式）
+系统使用优化的FFmpeg参数处理RTSP流：
+```bash
+OPENCV_FFMPEG_CAPTURE_OPTIONS="rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|analyzeduration;1000000|probesize;32"
+```
+- `rtsp_transport;tcp`：确保可靠传输
+- `fflags;nobuffer`：禁用解码器缓冲
+- `flags;low_delay`：启用低延迟模式
+- `analyzeduration;1000000`：减少分析时间
+- `probesize;32`：最小化探测数据量
+- `CAP_PROP_BUFFERSIZE=1`：最小化采集缓冲区大小
 
-### 内存管理
-- 跟踪特征历史限制为50帧，防止内存膨胀
-- 队列大小限制为2帧，避免内存堆积
-- 及时清理已移除的跟踪目标
+## 📝 统计逻辑说明
+
+### 三种计数类型
+1. **实时计数（Current Count）**：当前帧检测到的活跃人数
+2. **累计计数（Total Count）**：基于track_id的历史累计去重人数
+3. **进出计数（In/Out Count）**：基于虚拟线的进出方向统计
+
+### 计数原理
+- **实时计数**：直接统计当前帧中活跃的track数量
+- **累计计数**：每个新出现的track_id都会增加累计计数，track_id由ByteTrack算法分配，具有唯一性
+- **进出计数**：通过虚拟线（默认画面中间水平线）检测目标跨越方向：
+  - 向下移动（y坐标增大）：计入"In"
+  - 向上移动（y坐标减小）：计入"Out"
+  - 使用目标中心点的历史轨迹判断穿越方向
+  - 每个track_id只会被计数一次，防止重复统计
+
+### 虚拟线自定义
+当前版本使用默认中间线，支持自定义虚拟线位置和方向：
+- **水平线**：`direction='horizontal'`，`line_position=指定Y坐标`
+- **垂直线**：`direction='vertical'`，`line_position=指定X坐标`
 
 ## ❓ 常见问题
 
@@ -205,10 +214,8 @@ feat_weight=0.7,   # 特征距离权重（建议≥0.7）
 
 ### Q2: 模型文件找不到
 **解决方案：**
-- 确保模型文件放在正确位置：
-  - YOLO模型：`/home/pi/pedestrian-flow-monitoring/models/`
-  - ReID模型：`/home/pi/pedestrian-flow-monitoring/src/`
-- 修改代码中的模型路径变量
+- 确保在 `src/` 目录下运行脚本（所有模型文件都在此目录）
+- 不要修改工作目录，直接在 `src/` 目录下执行命令
 
 ### Q3: IP摄像头连接失败
 **解决方案：**
@@ -221,23 +228,8 @@ feat_weight=0.7,   # 特征距离权重（建议≥0.7）
 **解决方案：**
 - 降低YOLO输入尺寸（使用320或416）
 - 使用子码流（sub-stream）而非主码流
-- 关闭ReID功能（`use_reid=False`）
+- 关闭ReID功能（修改代码中 `use_reid=False`）
 - 降低显示窗口分辨率
 
-## 📝 统计逻辑说明
-
-### 两种计数类型
-1. **实时计数（Current Count）**：当前帧检测到的人数
-2. **累计计数（Total Count）**：基于track_id的历史累计去重人数
-
-### 计数原理
-- 每个新出现的track_id都会增加累计计数
-- track_id由ByteTrack算法分配，具有唯一性
-- 即使目标暂时丢失后重现，只要track_id相同就不会重复计数
-
-## 🔄 退出程序
-
-- 按下 **ESC** 键退出程序
-- 程序会自动清理资源并关闭所有窗口
-
----
+## 报告问题
+欢迎提交Issue和Pull Request来改进此项目。
