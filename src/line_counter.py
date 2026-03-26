@@ -1,73 +1,74 @@
+
 import numpy as np
 from collections import defaultdict
 
 class LineCounter:
     """
-    基于虚拟线的行人流量统计器
-    支持水平线和垂直线两种统计模式
+    Virtual line-based pedestrian flow counter
+    Supports both horizontal and vertical line counting modes
     """
     def __init__(self, line_position=None, direction='horizontal', max_tracks=1000):
         self.max_tracks = max_tracks
         
-        # 虚拟线位置和方向
+        # Virtual line position and direction
         self.line_pos = line_position
-        self.direction = direction  # 'horizontal' 或 'vertical'
+        self.direction = direction  # 'horizontal' or 'vertical'
         
-        # 进出计数
+        # In/out counts
         self.in_count = 0
         self.out_count = 0
         self.total_count = 0
         
-        # 实时当前帧人数
+        # Real-time count for current frame
         self.current_count = 0
         
-        # 轨迹历史记录 {track_id: [(x, y), ...]}
+        # Track history {track_id: [(x, y), ...]}
         self.track_history = defaultdict(list)
         
-        # 已统计过的轨迹ID集合，避免重复计数
+        # Set of tracked IDs that have already been counted to avoid double counting
         self.counted_tracks = set()
         
-        # 记录所有见过的track_ids（用于兼容原有total_count逻辑）
+        # Record all seen track_ids 
         self.seen_track_ids = set()
 
     def update(self, tracks, frame_shape=None):
         """
         tracks: [[x1,y1,x2,y2,id], ...]
-        frame_shape: (height, width) - 图像尺寸，用于自动设置虚拟线位置
+        frame_shape: (height, width) - image dimensions, used for automatic virtual line positioning
         Update counting logic with virtual line-based flow counting
         """
         self.current_count = len(tracks)
         
-        # 自动设置虚拟线位置（如果未指定）
+        # Automatically set virtual line position (if not specified)
         if self.line_pos is None and frame_shape is not None:
             if self.direction == 'horizontal':
-                self.line_pos = frame_shape[0] // 2  # 图像中间高度
+                self.line_pos = frame_shape[0] // 2  # Middle height of the image
             else:
-                self.line_pos = frame_shape[1] // 2  # 图像中间宽度
+                self.line_pos = frame_shape[1] // 2  # Middle width of the image
         elif self.line_pos is None:
-            # 如果没有frame_shape信息，使用默认值
+            # If no frame_shape information is available, use default value
             self.line_pos = 360
         
-        # 更新seen_track_ids（保持原有total_count逻辑兼容性）
+        # Update seen_track_ids
         for track in tracks:
             if len(track) >= 5:
                 track_id = track[4]
                 if track_id not in self.seen_track_ids:
                     self.seen_track_ids.add(track_id)
         
-        # 如果没有虚拟线位置，只做简单计数（兼容原有功能）
+        # If no virtual line position is set, perform simple counting only
         if self.line_pos is None:
             self.total_count = len(self.seen_track_ids)
             return
         
-        # 基于虚拟线的进出统计
+        # In/out statistics based on virtual line
         current_tracks = {}
         
-        # 处理当前帧的跟踪结果
+        # Process tracking results for current frame
         for track in tracks:
             if len(track) >= 5:
                 x1, y1, x2, y2, track_id = track[:5]
-                # 计算边界框中心点
+                # Calculate bounding box center point
                 center_x = (x1 + x2) // 2
                 center_y = (y1 + y2) // 2
                 center = (center_x, center_y)
@@ -77,12 +78,12 @@ class LineCounter:
                     'center': center
                 }
                 
-                # 更新轨迹历史
+                # Update track history
                 self.track_history[track_id].append(center)
-                if len(self.track_history[track_id]) > 30:  # 限制历史长度
+                if len(self.track_history[track_id]) > 30:  # Limit history length
                     self.track_history[track_id].pop(0)
         
-        # 检查轨迹是否穿过统计线
+        # Check if tracks cross the counting line
         for track_id, track_data in current_tracks.items():
             if track_id in self.counted_tracks:
                 continue
@@ -102,23 +103,23 @@ class LineCounter:
                     self.counted_tracks.add(track_id)
 
     def _cross_line(self, p1, p2):
-        """判断两点连线是否穿过统计线"""
+        """Check if the line connecting two points crosses the counting line"""
         if self.direction == 'horizontal':
-            # 水平线：检查y坐标是否跨过line_pos
+            # Horizontal line: check if y coordinates cross line_pos
             return (p1[1] < self.line_pos and p2[1] >= self.line_pos) or \
                    (p1[1] > self.line_pos and p2[1] <= self.line_pos)
         else:
-            # 垂直线：检查x坐标是否跨过line_pos
+            # Vertical line: check if x coordinates cross line_pos
             return (p1[0] < self.line_pos and p2[0] >= self.line_pos) or \
                    (p1[0] > self.line_pos and p2[0] <= self.line_pos)
     
     def _get_direction(self, p1, p2):
-        """判断移动方向"""
+        """Determine movement direction"""
         if self.direction == 'horizontal':
-            # 水平线：向下移动为进入，向上移动为离开
+            # Horizontal line: downward movement is 'in', upward movement is 'out'
             return 'in' if p2[1] > p1[1] else 'out'
         else:
-            # 垂直线：向右移动为进入，向左移动为离开
+            # Vertical line: rightward movement is 'in', leftward movement is 'out'
             return 'in' if p2[0] > p1[0] else 'out'
 
     def get_counts(self):
@@ -129,7 +130,7 @@ class LineCounter:
         return self.current_count, self.total_count, self.in_count, self.out_count
     
     def reset(self):
-        """重置计数器"""
+        """Reset counter"""
         self.in_count = 0
         self.out_count = 0
         self.total_count = 0
@@ -139,7 +140,7 @@ class LineCounter:
         self.seen_track_ids.clear()
     
     def get_line_info(self):
-        """获取统计线信息"""
+        """Get counting line information"""
         return {
             'position': self.line_pos,
             'direction': self.direction

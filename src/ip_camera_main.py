@@ -20,8 +20,8 @@ ONVIF_USER =""
 ONVIF_PASS =""
 
 # Global variables for thread communication
-frame_queue = queue.Queue(maxsize=5)  # Queue to store frames for processing
-result_queue = queue.Queue(maxsize=2)  # Store latest processing result
+frame_queue = queue.Queue(maxsize=2)  # Queue to store frames for processing
+result_queue = queue.Queue(maxsize=1)  # Store latest processing result
 stop_event = threading.Event()
 
 def discover_onvif_devices(timeout=3):
@@ -159,7 +159,7 @@ def yolo_v5_person_infer(
     net,
     conf_thresh=0.25,
     iou_thresh=0.45,
-    input_size=416
+    input_size=320
 ):
     """
     OpenCV DNN + YOLOv5n ONNX
@@ -233,7 +233,7 @@ def yolo_v5_person_infer(
 
 def setup_rtsp_stream(rtsp_url):
     """Setup RTSP stream with TCP transport for better reliability"""
-    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|analyzeduration;1000000|probesize;1024"
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|analyzeduration;1000000|probesize;32"
     cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap
@@ -326,7 +326,7 @@ def ai_processing_worker(net, actual_fps):
 def main():
     # Step 1: Skip discovery - Directly specify the camera info
     print("\nConnecting to camera directly...")
-    devices = discover_onvif_devices(timeout=5)
+    devices = discover_onvif_devices(timeout=2)
     
     if not devices:
         print("No ONVIF devices found. Please check your network connection.")
@@ -373,7 +373,7 @@ def main():
         # - "yolov5n_320.onnx": Smaller and faster, slightly lower precision
         # - "yolov5n_416.onnx": Balances speed and precision (default)
         # - "yolov5n_640.onnx": Higher precision, but slower speed
-        model_path = "yolov5n_416.onnx"
+        model_path = "yolov5n_320.onnx"
         if not os.path.exists(model_path):
             print(f"Model file not found: {model_path}")
             sys.exit(1)

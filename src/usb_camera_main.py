@@ -8,8 +8,6 @@ import queue
 import traceback
 from bytetrack import BYTETracker  
 from line_counter import LineCounter
-import warnings
-warnings.filterwarnings('ignore', category=UserWarning, module='numba')
 
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
@@ -163,13 +161,13 @@ def yolo_v5_person_infer(
 
 def ai_processing_worker(net, actual_fps):
     """Worker thread for AI processing and tracking"""
-    # Use ByteTrack (consistent with IP camera version)
+    # Use ByteTrack with parameters consistent with IP camera version
     tracker = BYTETracker(
-        track_thresh=0.5,      # Detection threshold for tracking
-        high_thresh=0.5,       # High confidence threshold
-        low_thresh=0.1,        # Low confidence threshold (key feature of ByteTrack: utilizing low-scoring detections)
-        match_thresh=0.7,      # Matching threshold
-        track_buffer=30,       # Tracking buffer size
+        track_thresh=0.2,      # Detection threshold for tracking
+        high_thresh=0.25,       # High confidence threshold
+        low_thresh=0.05,        # Low confidence threshold (key feature of ByteTrack: utilizing low-scoring detections)
+        match_thresh=0.5,      # Matching threshold
+        track_buffer=60,       # Tracking buffer size
         frame_rate=actual_fps, # Frame rate
         use_reid=True,         # Enable ReID features
     )
@@ -204,14 +202,14 @@ def ai_processing_worker(net, actual_fps):
             # Call tracker.update() directly with frame for internal ReID feature extraction
             tracks = tracker.update(persons, frame=frame)
             
-            # Initialize counter on first frame processing
+            # Initialize counter on first frame processing with proper frame_shape
             if counter is None:
-                line_y = frame.shape[0] // 2  # Use center of frame as counting line
-                counter = LineCounter()
+                frame_shape = (frame.shape[0], frame.shape[1])
+                counter = LineCounter(line_position=None, direction='horizontal')
 
-            # Update counter
-            counter.update(tracks,persons)
-            total_unique_count, total_count = counter.get_counts()
+            # Update counter with frame_shape for virtual line positioning
+            counter.update(tracks, frame_shape)
+            current_count, total_count, in_count, out_count = counter.get_counts()
 
             # Put results in result queue (overwrite old results if queue is full)
             try:
@@ -220,7 +218,9 @@ def ai_processing_worker(net, actual_fps):
                     'persons': persons,
                     'tracks': tracks,
                     'total_count': total_count,
-                    'total_unique_count': total_unique_count,
+                    'current_count': current_count,
+                    'in_count': in_count,
+                    'out_count': out_count,
                     'frame_id': frame_id,
                 })
             except queue.Full:
@@ -232,7 +232,9 @@ def ai_processing_worker(net, actual_fps):
                         'persons': persons,
                         'tracks': tracks,
                         'total_count': total_count,
-                        'total_unique_count': total_unique_count,
+                        'current_count': current_count,
+                        'in_count': in_count,
+                        'out_count': out_count,
                         'frame_id': frame_id,
                     })
                 except queue.Empty:
@@ -348,20 +350,33 @@ def main():
                 persons = result['persons']
                 tracks = result['tracks']
                 total_count = result['total_count']
-                total_unique_count = result['total_unique_count']
+                current_count = result['current_count']
+                in_count = result['in_count']
+                out_count = result['out_count']
                 current_frame_id = result['frame_id']
                 last_processed_frame_id = current_frame_id
 
                 # Draw detection boxes
-                for x1, y1, x2, y2, track_id in tracks:
-                    cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    cv2.putText(display_frame, f"ID:{track_id}", (x1, y1-5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                for track in tracks:
+                    # Handle both old format (5 elements) and new format (6+ elements)
+                    if len(track) >= 5:
+                        x1, y1, x2, y2, track_id = track[:5]
+                        cv2.rectangle(display_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+                        cv2.putText(display_frame, f"ID:{int(track_id)}", (int(x1), int(y1)-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                
+                # Draw virtual line (horizontal line at middle of frame)
+                line_y = display_frame.shape[0] // 2
+                cv2.line(display_frame, (0, line_y), (display_frame.shape[1], line_y), (255, 0, 0), 2)
                 
                 # Display counting statistics
-                cv2.putText(display_frame, f"Current Count: {total_count}", (20, 80),
+                cv2.putText(display_frame, f"Current Count: {current_count}", (20, 80),
                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(display_frame, f"Total Count: {total_unique_count}", (20, 110),
+                cv2.putText(display_frame, f"In: {in_count}", (20, 110),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(display_frame, f"Out: {out_count}", (20, 140),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.putText(display_frame, f"Total Count: {total_count}", (20, 170),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
                 # Update cache and display
