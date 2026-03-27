@@ -1,5 +1,4 @@
-# Pedestrian Flow Monitoring Device
-
+# People Counting Device
 [English]| [中文](README_zh.md)
 
 ## 🎯 Project Overview
@@ -12,7 +11,8 @@ This project is a lightweight pedestrian flow monitoring device running on Quect
 - Support USB cameras, IP cameras, and local video files
 - Provide real-time counting, cumulative deduplicated counting, and in/out direction statistics
 
-[Interface Preview]()
+![Interface Preview](../assets/image.jpg)
+
 
 ## ✨ Key Features
 
@@ -27,20 +27,22 @@ This project is a lightweight pedestrian flow monitoring device running on Quect
 - **ReID Enhancement**: Optional OSNet ReID model to improve tracking stability
 
 
-## 🏗️ System Architecture
+## 🏗️ Project Architecture
 
 ```
-Pedestrian Flow Monitoring Device
-├── Video Input Layer
-│   ├── USB Camera (usb_camera_main.py)
-│   ├── IP Camera (ip_camera_main.py)  
-│   └── Local Video File (local_video_main.py)
-├── AI Processing Layer
-│   ├── YOLOv5n Object Detection (yolo_v5_person_infer)
-│   ├── ByteTrack Object Tracking (bytetrack.py)
-│   └── OSNet ReID Feature Extraction (reid_extractor.py)
-└── Statistics Output Layer
-    └── Person Counter (line_counter.py)
+People Counting Device
+├── Project Root 
+│   ├── README.md                 # Project documentation
+│   ├── README_zh.md              # Chinese documentation  
+│   ├── requirements.txt          # Python dependencies
+│   ├── asset/                    # Sample assets and test videos
+│   └── src/                      # Source code directory
+│       ├── usb_camera_main.py    # USB camera entry point
+│       ├── ip_camera_main.py     # IP camera entry point  
+│       ├── local_video_main.py   # Local video file entry point
+│       ├── bytetrack.py          # ByteTrack object tracking implementation
+│       ├── line_counter.py       # Virtual line-based counting logic
+│       └── reid_extractor.py     # OSNet ReID feature extraction
 ```
 
 ## 🔧 Installation Dependencies
@@ -139,29 +141,34 @@ Although the current version uses default middle line, the `LineCounter` class s
 ## ❓ Common Issues
 
 ### Q1: Camera Cannot Be Opened
-**Solutions:**
-- Ensure user is added to video group: `sudo usermod -aG video $USER`
-- Restart system to apply group permissions
-- Check if camera is occupied by other programs
 
-### Q2: Model Files Not Found
-**Solutions:**
-- Ensure running scripts from `src/` directory (all model files are located here)
-- Do not change working directory, execute commands directly in `src/` directory
+**Solution:**
+- Add the current user to the video group: `sudo usermod -aG video $USER`
+- Restart the system to apply group permissions
+- Check if the camera is occupied by another process
+
+### Q2: Model File Loading Failed
+
+**Solution:**
+- Ensure scripts are run from the `src/` directory (all model files are located in this directory)
+- Do not change the working directory; execute startup commands directly in the `src/` directory
 
 ### Q3: IP Camera Connection Failed
-**Solutions:**
-- Verify camera IP address and port are correct
-- Check network connectivity: `ping 192.168.x.x`
-- Confirm ONVIF service is enabled
-- Fill in correct username and password if authentication is required
 
-### Q4: Performance Lag
-**Solutions:**
-- Reduce YOLO input size (use 320 or 416)
-- Use sub-stream instead of main stream
-- Disable ReID feature (set `use_reid=False` in code)
+**Solution:**
+
+- Test network connectivity: `ping <camera IP address>`
+- Confirm that the camera's ONVIF service is enabled
+
+### Q4: System Performance Lag
+
+**Solution:**
+
+- Disable ReID feature (set `use_reid=False` in the code)
 - Reduce display window resolution
 
+
 ## Reporting Issues
-We welcome Issues and Pull Requests to improve this project.
+If you encounter any issues during use, please submit technical inquiries on the [Quectel Official Forum](https://forumschinese.quectel.com/c/quectel-pi/58). Our technical support team will respond promptly.
+
+We welcome you to submit Issues to report problems or Pull Requests to contribute code improvements!

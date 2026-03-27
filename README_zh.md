@@ -12,7 +12,8 @@
 - 支持USB摄像头、IP摄像头、本地视频文件
 - 提供实时人数统计、累计去重人数统计和进出方向统计
 
-[界面预览]()
+![界面预览](../assets/image.jpg)
+
 
 ## ✨ 主要特性
 
@@ -27,20 +28,22 @@
 - **ReID增强**：可选启用OSNet ReID模型，提升跟踪稳定性
 
 
-## 🏗️ 系统架构
+## 🏗️ 项目架构
 
 ```
 人流量统计设备
-├── 视频输入层
-│   ├── USB摄像头 (usb_camera_main.py)
-│   ├── IP摄像头 (ip_camera_main.py)  
-│   └── 本地视频文件 (local_video_main.py)
-├── AI处理层
-│   ├── YOLOv5n目标检测 (yolo_v5_person_infer)
-│   ├── ByteTrack目标跟踪 (bytetrack.py)
-│   └── OSNet ReID特征提取 (reid_extractor.py)
-└── 统计输出层
-    └── 人员计数器 (line_counter.py)
+├── 项目根目录
+│   ├── README.md                 # 项目文档
+│   ├── README_zh.md              # 中文文档  
+│   ├── requirements.txt          # Python依赖
+│   ├── asset/                    # 示例素材和测试视频
+│   └── src/                      # 源代码目录
+│       ├── usb_camera_main.py    # USB摄像头入口点
+│       ├── ip_camera_main.py     # IP摄像头入口点  
+│       ├── local_video_main.py   # 本地视频文件入口点
+│       ├── bytetrack.py          # ByteTrack目标跟踪实现
+│       ├── line_counter.py       # 虚拟线计数逻辑
+│       └── reid_extractor.py     # OSNet ReID特征提取
 ```
 
 ## 🔧 安装依赖
@@ -137,29 +140,33 @@ python3 local_video_main.py --video test_video.mp4 --model yolov5n_640.onnx
 ## ❓ 常见问题
 
 ### Q1: 摄像头无法打开
-**解决方案：**
-- 确认用户已添加到video组：`sudo usermod -aG video $USER`
-- 重启系统使组权限生效
-- 检查摄像头是否被其他程序占用
 
-### Q2: 模型文件找不到
 **解决方案：**
-- 确保在 `src/` 目录下运行脚本（所有模型文件都在此目录）
-- 不要修改工作目录，直接在 `src/` 目录下执行命令
 
-### Q3: IP摄像头连接失败
-**解决方案：**
-- 确认摄像头IP地址和端口正确
-- 检查网络连通性：`ping 192.168.x.x`
-- 确认ONVIF服务已启用
-- 如需认证，填写正确的用户名和密码
+- 将当前用户添加到 video 用户组：`sudo usermod -aG video $USER`
+- 重启系统使用户组权限生效
+- 检查摄像头是否被其他进程占用
 
-### Q4: 性能卡顿
+### Q2: 模型文件加载失败
+
 **解决方案：**
-- 降低YOLO输入尺寸（使用320或416）
-- 使用子码流（sub-stream）而非主码流
-- 关闭ReID功能（修改代码中 `use_reid=False`）
+- 确保在 `src/` 目录下运行脚本（所有模型文件均位于此目录）
+- 不要更改工作目录，直接在 `src/` 目录执行启动命令
+
+### Q3: IP 摄像头连接失败
+
+**解决方案：**
+
+- 测试网络连通性：`ping <摄像头IP地址>`
+- 确认摄像头 ONVIF 服务已启用
+
+### Q4: 系统性能卡顿
+
+**解决方案：**
+
+- 关闭 ReID 功能（在代码中设置 `use_reid=False`）
 - 降低显示窗口分辨率
 
 ## 报告问题
-欢迎提交Issue和Pull Request来改进此项目。
+如在使用过程中遇到问题，欢迎在[移远官方论坛](https://forumschinese.quectel.com/c/quectel-pi/58) 提交技术咨询，我们的技术支持团队将及时为您解答。
+欢迎提交 Issue 反馈问题或 Pull Request 贡献代码改进！

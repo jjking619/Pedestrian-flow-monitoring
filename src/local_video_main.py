@@ -51,7 +51,7 @@ def yolo_v5_person_infer(
     net,
     conf_thresh=0.25,
     iou_thresh=0.45,
-    input_size=416
+    input_size=320
 ):
     """
     OpenCV DNN + YOLOv5n ONNX
@@ -224,8 +224,8 @@ def main():
     parser = argparse.ArgumentParser(description='Pedestrian Flow Monitoring with Local Video File')
     parser.add_argument('--video', type=str, default='street.mp4', 
                        help='Path to local video file (default: street.mp4)')
-    parser.add_argument('--model', type=str, default='yolov5n_416.onnx',
-                       help='Path to YOLOv5 ONNX model (default: yolov5n_416.onnx)')
+    parser.add_argument('--model', type=str, default='yolov5n_320.onnx',
+                       help='Path to YOLOv5 ONNX model (default: yolov5n_320.onnx)')
     args = parser.parse_args()
 
     # Step 1: Setup video capture from local file
