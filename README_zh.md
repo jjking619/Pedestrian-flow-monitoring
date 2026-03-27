@@ -1,6 +1,6 @@
 # 人流量统计设备
 
-[中文](README_zh.md) | [English](README.md)
+[中文]| [English](README.md)
 
 ## 🎯 项目概述
 
@@ -64,8 +64,8 @@ pip3 install -r requirements.txt
 
 | 模型文件 | 输入尺寸 | 特点 |
 |---------|---------|------|
-| `yolov5n_320.onnx` | 320×320 | 速度最快，精度稍低（USB/IP模式默认）|
-| `yolov5n_416.onnx` | 416×416 | 速度与精度平衡（本地视频文件测试模式默认）|
+| `yolov5n_320.onnx` | 320×320 | 速度最快，精度稍低（默认）|
+| `yolov5n_416.onnx` | 416×416 | 速度与精度平衡|
 | `yolov5n_640.onnx` | 640×640 | 精度最高，速度较慢 |
 
 > **注意**：所有模型文件已包含在项目中，位于 `src/` 目录下，无需额外下载。
@@ -102,7 +102,7 @@ python3 local_video_main.py --video ../asset/street.mp4
 
 **命令行参数：**
 - `--video`: 指定视频文件路径（必填）
-- `--model`: 指定YOLO模型路径（可选，默认使用 `yolov5n_416.onnx`）
+- `--model`: 指定YOLO模型路径（可选，默认使用 `yolov5n_320.onnx`）
 
 **示例：**
 ```bash
@@ -112,76 +112,6 @@ python3 local_video_main.py --video test_video.mp4
 # 指定高精度模型
 python3 local_video_main.py --video test_video.mp4 --model yolov5n_640.onnx
 ```
-
-
-
-## ⚙️ 配置详情
-
-### YOLO检测参数
-代码中实际使用的参数值：
-
-```python
-# 检测置信度阈值（实际值）
-conf_thresh=0.25
-
-# NMS IOU阈值（实际值）
-iou_thresh=0.45
-
-# YOLO输入尺寸
-input_size=320  # USB/IP模式默认值
-input_size=416  # 视频文件模式默认值
-```
-
-### ByteTrack跟踪参数
-
-**USB摄像头和IP摄像头模式：**
-```python
-tracker = BYTETracker(
-    track_thresh=0.2,      # 跟踪检测阈值
-    high_thresh=0.25,      # 高置信度阈值
-    low_thresh=0.05,       # 低置信度阈值（ByteTrack核心特性）
-    match_thresh=0.5,      # 匹配阈值
-    track_buffer=60,       # 跟踪缓冲区大小
-    frame_rate=actual_fps, # 实际帧率
-    use_reid=True,         # 启用ReID特征
-    iou_weight=0.6,        # IOU距离权重
-    feat_weight=0.3,       # 特征距离权重
-)
-```
-
-**本地视频文件模式：**
-```python
-tracker = BYTETracker(
-    track_thresh=0.2,      # 跟踪检测阈值
-    high_thresh=0.3,       # 高置信度阈值
-    low_thresh=0.05,       # 低置信度阈值
-    match_thresh=0.5,      # 匹配阈值
-    track_buffer=30,       # 跟踪缓冲区大小
-    frame_rate=30,         # 固定帧率
-    use_reid=True,         # 启用ReID特征
-    iou_weight=0.6,        # IOU距离权重
-    feat_weight=0.3,       # 特征距离权重
-)
-```
-
-### 虚拟线计数配置
-- **默认位置**：画面中间水平线（画面高度的一半）
-- **计数逻辑**：
-  - 向下穿越虚拟线：计入"In"（进入）
-  - 向上穿越虚拟线：计入"Out"（离开）
-  - 每个track_id仅计数一次，防止重复统计
-
-### RTSP流优化（IP摄像头模式）
-系统使用优化的FFmpeg参数处理RTSP流：
-```bash
-OPENCV_FFMPEG_CAPTURE_OPTIONS="rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|analyzeduration;1000000|probesize;32"
-```
-- `rtsp_transport;tcp`：确保可靠传输
-- `fflags;nobuffer`：禁用解码器缓冲
-- `flags;low_delay`：启用低延迟模式
-- `analyzeduration;1000000`：减少分析时间
-- `probesize;32`：最小化探测数据量
-- `CAP_PROP_BUFFERSIZE=1`：最小化采集缓冲区大小
 
 ## 📝 统计逻辑说明
 
